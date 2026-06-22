@@ -1,48 +1,47 @@
-# pnpm-install — composite action
+# pnpm-install — composite action: install with a private scoped-registry
 #
-# Installs pnpm dependencies with Forgejo private-registry auth for
-# @etamong-playground/* scoped packages.
+# Bring-your-own-infra: registry URL, scope, and token are inputs. Fetch the
+# token from your secret manager in the CALLING workflow and pass it in.
 #
-# TOKEN NOTE: forgejo-npm-token must be fetched by the CALLER via
-# hashicorp/vault-action (kubernetes auth, role `arc-runner-workflows`,
-# secret `homelab/data/apps/forgejo/npm-publish`) on an ARC runner,
-# then passed in as `forgejo-npm-token`.
-#
-# WHY ~/.npmrc (not pnpm config):
-#   corepack-pinned pnpm reads auth from ~/.npmrc; `pnpm config set`
-#   writes to a different location that corepack-managed pnpm ignores
-#   (STANDING rule).
+# WHY ~/.npmrc (not `pnpm config`): corepack-pinned pnpm reads auth from
+# ~/.npmrc; `pnpm config set` writes elsewhere and is ignored.
 
 name: pnpm-install
-description: "pnpm install with Forgejo private-registry auth for @etamong-playground/* packages"
+description: "pnpm install with auth for a private scoped npm registry"
 
 inputs:
   working-directory:
     description: "Directory containing package.json / pnpm-lock.yaml"
     required: false
     default: "."
-  forgejo-npm-token:
-    description: "Forgejo npm token from Vault homelab/apps/forgejo/npm-publish — fetch via hashicorp/vault-action on ARC runner before calling this action"
+  registry-url:
+    description: "Scoped npm registry URL, e.g. https://npm.example.com/api/packages/<org>/npm/"
+    required: true
+  scope:
+    description: "npm scope, e.g. @myorg"
+    required: true
+  npm-token:
+    description: "Auth token for the scoped registry (pass from your secret manager)"
     required: true
 
 runs:
   using: composite
   steps:
-    - name: Enable corepack (reads packageManager from package.json)
+    - name: Enable corepack
       shell: bash
       run: corepack enable
-
-    - name: Write ~/.npmrc with Forgejo registry auth
+    - name: Write ~/.npmrc with scoped-registry auth
       shell: bash
+      env:
+        REGISTRY_URL: ${{ inputs.registry-url }}
+        SCOPE: ${{ inputs.scope }}
+        NPM_TOKEN: ${{ inputs.npm-token }}
       run: |
-        # Write auth for @etamong-playground scoped packages served from
-        # the Forgejo npm package registry. Auth goes in ~/.npmrc because
-        # corepack-managed pnpm ignores `pnpm config set` for auth tokens.
-        cat >> ~/.npmrc <<'EOF'
-        @etamong-playground:registry=https://git.m.etamong.com/api/packages/etamong-playground/npm/
-        //git.m.etamong.com/api/packages/etamong-playground/npm/:_authToken=${{ inputs.forgejo-npm-token }}
-        EOF
-
+        REG_NO_SCHEME=$(printf '%s' "$REGISTRY_URL" | sed -E 's#^https?:##')
+        {
+          echo "${SCOPE}:registry=${REGISTRY_URL}"
+          echo "${REG_NO_SCHEME}:_authToken=${NPM_TOKEN}"
+        } >> ~/.npmrc
     - name: Install dependencies
       shell: bash
       working-directory: ${{ inputs.working-directory }}

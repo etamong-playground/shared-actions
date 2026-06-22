@@ -1,24 +1,29 @@
-# kaniko-build.yml — reusable image build → push to in-cluster Zot
+# kaniko-build.yml — reusable image build → push to an OCI registry (docker buildx)
 #
-# WHY ARC RUNNER:
-#   `ubuntu-latest` cannot reach registry.m.etamong.com (internal cluster
-#   service); it ETIMEDOUTs. Only the `arc-etamong-playground` runner runs
-#   inside the metamong cluster where internal DNS + Vault are reachable.
+# Bring-your-own-infra: registry host and runner are inputs. Use a self-hosted
+# `runner` if your registry / secret manager is only reachable internally.
 #
-# WHY oci-mediatypes=true + provenance=false:
-#   Zot stores images as OCI artifacts. A tag pushed once as OCI cannot be
-#   overwritten with Docker v2 schema — Zot returns HTTP 400. buildx must
-#   emit OCI mediatypes on every push to stay compatible (STANDING rule).
-#   provenance=false prevents buildx from pushing an extra OCI artifact-type
-#   manifest that confuses Zot's index.
+# WHY oci-mediatypes=true + provenance=false: many OCI registries (e.g. Zot)
+# reject a Docker v2 schema-2 push over a tag already stored as OCI-typed
+# (HTTP 400). buildx must emit OCI mediatypes on every push; provenance=false
+# avoids an extra artifact-type manifest that confuses some registries' index.
 
 on:
   workflow_call:
     inputs:
-      image-name:
-        description: "Path under registry, e.g. 'draw' → registry.m.etamong.com/draw"
+      registry:
+        description: "Registry host/prefix, e.g. registry.example.com → registry.example.com/<image-name>"
         required: true
         type: string
+      image-name:
+        description: "Path under the registry, e.g. 'myapp'"
+        required: true
+        type: string
+      runner:
+        description: "Runner label. Use a self-hosted runner if the registry / secret manager is network-internal."
+        required: false
+        type: string
+        default: "ubuntu-latest"
       context:
         description: "Docker build context path"
         required: false
@@ -30,7 +35,7 @@ on:
         type: string
         default: "Dockerfile"
       build-extra-args:
-        description: "Additional --build-arg or other docker/build-push-action args (newline-separated key=value pairs passed as build-args)"
+        description: "Additional build-args (newline-separated key=value)"
         required: false
         type: string
         default: ""
@@ -44,29 +49,24 @@ on:
         required: true
       REGISTRY_PASSWORD:
         required: true
-      FORGEJO_NPM_TOKEN:
+      NPM_TOKEN:
+        description: "Optional npm token forwarded as the NPM_TOKEN build-arg (for Dockerfiles installing private packages)"
         required: false
 
 jobs:
   build:
-    # MANDATORY: only arc-etamong-playground can reach registry.m.etamong.com
-    # and internal Vault; ubuntu-latest ETIMEDOUTs on cluster-internal hosts.
-    runs-on: arc-etamong-playground
-
+    runs-on: ${{ inputs.runner }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
-
-      - name: Login to in-cluster Zot registry
+      - name: Login to registry
         uses: docker/login-action@v3
         with:
-          registry: registry.m.etamong.com
+          registry: ${{ inputs.registry }}
           username: ${{ secrets.REGISTRY_USER }}
           password: ${{ secrets.REGISTRY_PASSWORD }}
-
       - name: Build and push
         uses: docker/build-push-action@v6
         with:
@@ -74,20 +74,14 @@ jobs:
           file: ${{ inputs.dockerfile }}
           push: true
           tags: |
-            registry.m.etamong.com/${{ inputs.image-name }}:${{ github.sha }}
-            registry.m.etamong.com/${{ inputs.image-name }}:latest
-          # oci-mediatypes=true: CRITICAL — Zot rejects Docker v2 schema over
-          # existing OCI tags with HTTP 400. Must match the OCI type already
-          # stored (STANDING: see zot_oci_mediatype_pinned memory).
+            ${{ inputs.registry }}/${{ inputs.image-name }}:${{ github.sha }}
+            ${{ inputs.registry }}/${{ inputs.image-name }}:latest
           outputs: type=registry,oci-mediatypes=true
-          # provenance=false: prevents buildx from attaching an extra
-          # OCI artifact-type provenance manifest that causes mediatype
-          # conflicts in Zot's image index.
           provenance: false
           build-args: |
             BUILD_SHA=${{ github.sha }}
             BUILD_TIME=${{ github.event.head_commit.timestamp }}
-            FORGEJO_NPM_TOKEN=${{ secrets.FORGEJO_NPM_TOKEN }}
+            NPM_TOKEN=${{ secrets.NPM_TOKEN }}
             ${{ inputs.build-extra-args }}
           cache-from: ${{ inputs.cache && format('type=gha,scope={0}', inputs.image-name) || '' }}
           cache-to: ${{ inputs.cache && format('type=gha,mode=max,scope={0}', inputs.image-name) || '' }}

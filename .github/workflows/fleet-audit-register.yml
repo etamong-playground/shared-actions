@@ -1,55 +1,53 @@
-# fleet-audit-register.yml — reusable: POST version snapshot to fleet status hub
+# fleet-audit-register.yml — reusable: POST a version snapshot to a version-audit hub
 #
-# NOTE ON RUNNER:
-#   This job only needs curl, so ubuntu-latest is sufficient. However, if the
-#   caller fetches FLEET_TOKEN from internal Vault at job time (rather than
-#   storing it as a GHA secret), the fetch step must run on arc-etamong-playground
-#   since ubuntu-latest cannot reach vault.m.etamong.com. The recommended pattern
-#   is to store FLEET_TOKEN as a GHA Actions secret at the repo/org level and
-#   pass it here — then ubuntu-latest is fine.
+# Bring-your-own-infra: ingest-url and runner are inputs. POSTs to
+# <ingest-url>/<app-name>/ingest with an X-Internal-Secret header.
 
 on:
   workflow_call:
     inputs:
+      ingest-url:
+        description: "Version-audit ingest base URL, e.g. https://status.example.com/cluster"
+        required: true
+        type: string
       app-name:
-        description: "App identifier registered in the fleet status hub (e.g. 'draw', 'schedule-manager')"
+        description: "App identifier"
         required: true
         type: string
       app-version:
-        description: "Version string to register (defaults to the commit SHA)"
+        description: "Version string (defaults to the commit SHA)"
         required: false
         type: string
         default: ${{ github.sha }}
+      runner:
+        description: "Runner label (self-hosted if the ingest endpoint is network-internal)"
+        required: false
+        type: string
+        default: "ubuntu-latest"
     secrets:
-      FLEET_TOKEN:
+      INGEST_TOKEN:
         required: true
 
 jobs:
   register:
-    runs-on: ubuntu-latest
-
+    runs-on: ${{ inputs.runner }}
     steps:
-      - name: Register version with fleet status hub
+      - name: Register version
         env:
-          FLEET_TOKEN: ${{ secrets.FLEET_TOKEN }}
+          INGEST_TOKEN: ${{ secrets.INGEST_TOKEN }}
+          INGEST_URL: ${{ inputs.ingest-url }}
           APP_NAME: ${{ inputs.app-name }}
           APP_VERSION: ${{ inputs.app-version }}
           CI_RUN_URL: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
           COMMIT_SHA: ${{ github.sha }}
         run: |
-          if [ -z "$FLEET_TOKEN" ]; then
-            echo "FLEET_TOKEN not set — skipping fleet status registration"
+          if [ -z "$INGEST_TOKEN" ]; then
+            echo "INGEST_TOKEN not set — skipping version registration"
             exit 0
           fi
-
           BUILD_TIME=$(date -u +%FT%TZ)
-
-          curl \
-            --fail \
-            --silent \
-            --show-error \
-            --request POST \
+          curl --fail --silent --show-error --request POST \
             --header "Content-Type: application/json" \
-            --header "X-Internal-Secret: ${FLEET_TOKEN}" \
+            --header "X-Internal-Secret: ${INGEST_TOKEN}" \
             --data "{\"version\":\"${APP_VERSION}\",\"sha\":\"${COMMIT_SHA}\",\"ci_run\":\"${CI_RUN_URL}\",\"time\":\"${BUILD_TIME}\"}" \
-            "https://status.m.etamong.com/cluster/${APP_NAME}/ingest"
+            "${INGEST_URL}/${APP_NAME}/ingest"
