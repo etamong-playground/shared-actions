@@ -1,5 +1,9 @@
 # shared-actions
 
+> **About** — Reusable GitHub Actions workflows for a personal homelab "fleet" of small apps (image build → in-cluster registry, pnpm install with a private registry, fleet version audit). Published to show the **CI / platform design** behind a self-hosted fleet — authored and maintained with [Claude Code](https://www.anthropic.com/claude-code) (Anthropic's agentic CLI), not hand-written. These workflows are **cluster-specific** (they target this fleet's ARC runners / registry / Vault), so they're a reference, not a drop-in for other setups.
+>
+> **This is a public repository** — keep internal infrastructure details (secret paths, private credentials) out of code, comments, and commit messages.
+
 Reusable GitHub Actions workflows and composite actions for the etamong-playground fleet. Ported from GitLab `etamong-lab/shared/ci` (v0.2.0).
 
 **Status:** No consumers yet — apps adopt these as they migrate to GitHub Actions (Wave 3, [planning#8](https://github.com/etamong-playground/planning/issues/8)). Apps that remain on Forgejo use Forgejo Actions; a separate Forgejo-compatible equivalent may be added there in a later wave.
