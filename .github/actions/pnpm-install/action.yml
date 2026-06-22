@@ -1,0 +1,49 @@
+# pnpm-install — composite action
+#
+# Installs pnpm dependencies with Forgejo private-registry auth for
+# @etamong-playground/* scoped packages.
+#
+# TOKEN NOTE: forgejo-npm-token must be fetched by the CALLER via
+# hashicorp/vault-action (kubernetes auth, role `arc-runner-workflows`,
+# secret `homelab/data/apps/forgejo/npm-publish`) on an ARC runner,
+# then passed in as `forgejo-npm-token`.
+#
+# WHY ~/.npmrc (not pnpm config):
+#   corepack-pinned pnpm reads auth from ~/.npmrc; `pnpm config set`
+#   writes to a different location that corepack-managed pnpm ignores
+#   (STANDING rule).
+
+name: pnpm-install
+description: "pnpm install with Forgejo private-registry auth for @etamong-playground/* packages"
+
+inputs:
+  working-directory:
+    description: "Directory containing package.json / pnpm-lock.yaml"
+    required: false
+    default: "."
+  forgejo-npm-token:
+    description: "Forgejo npm token from Vault homelab/apps/forgejo/npm-publish — fetch via hashicorp/vault-action on ARC runner before calling this action"
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Enable corepack (reads packageManager from package.json)
+      shell: bash
+      run: corepack enable
+
+    - name: Write ~/.npmrc with Forgejo registry auth
+      shell: bash
+      run: |
+        # Write auth for @etamong-playground scoped packages served from
+        # the Forgejo npm package registry. Auth goes in ~/.npmrc because
+        # corepack-managed pnpm ignores `pnpm config set` for auth tokens.
+        cat >> ~/.npmrc <<'EOF'
+        @etamong-playground:registry=https://git.m.etamong.com/api/packages/etamong-playground/npm/
+        //git.m.etamong.com/api/packages/etamong-playground/npm/:_authToken=${{ inputs.forgejo-npm-token }}
+        EOF
+
+    - name: Install dependencies
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: pnpm install --frozen-lockfile --ignore-scripts
