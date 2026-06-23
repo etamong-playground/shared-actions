@@ -1,0 +1,52 @@
+# deploy-to-pages — composite action
+#
+# Uploads a built directory to pages.m.etamong.com (or a custom
+# Pages instance) via the deploy API.
+#
+# WHY tar+curl: the Pages API accepts a single gzip tarball of the
+# static directory. curl with --data-binary streams the pipe into
+# the POST body without buffering the whole tarball into memory.
+
+name: deploy-to-pages
+description: "Deploy a built static directory to the etamong-lab Pages platform"
+
+inputs:
+  site-slug:
+    description: "Slug of the Pages site to deploy to"
+    required: true
+  dist-dir:
+    description: "Path to the built static directory (relative to workspace root)"
+    required: false
+    default: "dist"
+  pages-url:
+    description: "Pages instance base URL"
+    required: false
+    default: "https://pages.m.etamong.com"
+  pages-token:
+    description: "Bearer token for the Pages deploy API (mint from the Pages dashboard)"
+    required: true
+  commit-sha:
+    description: "Git SHA to attach to the deploy (default: $GITHUM_SHA)"
+    required: false
+    default: "$(git rev-parse HEAD)"
+
+runs:
+  using: composite
+  steps:
+    - name: Deploy to Pages
+      shell: bash
+      env:
+        PAGES_TOKEN: ${ { inputs.pages-token } }
+        PAGES_URL: ${ { inputs.pages-url } }
+        PAGES_SITE: ${ { inputs.site-slug } }
+        DIST_DIR: ${ { inputs.dist-dir } }
+      run: |
+        SHA=${ { inputs.commit-sha } }
+        if [ -z "$SHA" ]; then
+          SHA="$(git rev-parse HEAD)"
+        fi
+        tar czf - -C "$DIST_DIR" . | curl -fSs -X POST \
+          -H "Authorization: Bearer $PAGES_TOKEN" \
+          -H "Content-Type: application/gzip" \
+          --data-binary @- \
+          "$PAGES_URL/api/v1/sites/$PAGES_SITE/deploys?commit=$SHA"
