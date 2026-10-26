@@ -109,6 +109,7 @@ jobs:
 `vault-auth-path` defaults to `kubernetes`; `kubernetes-token-path` defaults to the standard Kubernetes service-account token path.
 The Vault URL must be an HTTPS host origin, optionally with a port.
 Owner, repository and Vault selectors reject empty or ambiguous values before credential retrieval.
+The repository name follows GitHub's [100-character ASCII limit](https://docs.github.com/en/repositories/creating-and-managing-repositories/creating-a-new-repository).
 The token is available only as the `token` output and is not exported into the job environment automatically.
 
 For image builds, pass the token through a BuildKit secret rather than a build argument or authenticated URL.

@@ -26,6 +26,10 @@ class PrivateSourceScope(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(result.stdout, "")
 
+    def test_repository_name_length_boundary(self):
+        self.assertEqual(self.run_validation({"SOURCE_REPOSITORY": "r" * 100}).returncode, 0)
+        self.assertNotEqual(self.run_validation({"SOURCE_REPOSITORY": "r" * 101}).returncode, 0)
+
     def test_rejects_missing_or_multiple_repository_scope(self):
         for value in ["", " ", "*", "owner/repo", "repo,other", "repo\nother", "repo other", ".", ".."]:
             with self.subTest(value=value):
