@@ -1,0 +1,65 @@
+name: Private source token
+description: Mint read-only access to one private source repository using a trusted Kubernetes runner
+inputs:
+  vault-url:
+    description: HTTPS origin of the Vault service reachable by the runner
+    required: true
+  vault-role:
+    description: Existing Vault Kubernetes role authorized for the runner service account
+    required: true
+  vault-auth-path:
+    description: Vault Kubernetes authentication mount
+    default: kubernetes
+  kubernetes-token-path:
+    description: Projected service-account JWT file on the runner
+    default: /var/run/secrets/kubernetes.io/serviceaccount/token
+  app-secret-path:
+    description: Vault KV API path containing the app_id and private_key fields
+    required: true
+  owner:
+    description: GitHub organization or user that owns the source repository
+    required: true
+  repository:
+    description: One source repository name without its owner
+    required: true
+outputs:
+  token:
+    description: Short-lived installation token restricted to source contents read access
+    value: ${{ steps.token.outputs.token }}
+runs:
+  using: composite
+  steps:
+    - name: Validate source scope
+      shell: bash
+      env:
+        SOURCE_OWNER: ${{ inputs.owner }}
+        SOURCE_REPOSITORY: ${{ inputs.repository }}
+        SOURCE_VAULT_URL: ${{ inputs.vault-url }}
+        SOURCE_VAULT_ROLE: ${{ inputs.vault-role }}
+        SOURCE_VAULT_AUTH_PATH: ${{ inputs.vault-auth-path }}
+        SOURCE_TOKEN_PATH: ${{ inputs.kubernetes-token-path }}
+        SOURCE_APP_SECRET_PATH: ${{ inputs.app-secret-path }}
+      run: bash "$GITHUB_ACTION_PATH/validate.sh"
+    - name: Read App credentials
+      uses: hashicorp/vault-action@4c06c5ccf5c0761b6029f56cfb1dcf5565918a3b # v3
+      id: vault
+      with:
+        url: ${{ inputs.vault-url }}
+        method: kubernetes
+        path: ${{ inputs.vault-auth-path }}
+        role: ${{ inputs.vault-role }}
+        kubernetesTokenPath: ${{ inputs.kubernetes-token-path }}
+        exportEnv: false
+        secrets: |
+          ${{ inputs.app-secret-path }} app_id | appId ;
+          ${{ inputs.app-secret-path }} private_key | privateKey ;
+    - name: Mint source token
+      uses: actions/create-github-app-token@fee1f7d63c2ff003460e3d139729b119787bc349 # v2
+      id: token
+      with:
+        app-id: ${{ steps.vault.outputs.appId }}
+        private-key: ${{ steps.vault.outputs.privateKey }}
+        owner: ${{ inputs.owner }}
+        repositories: ${{ inputs.repository }}
+        permission-contents: read
+        skip-token-revoke: false
