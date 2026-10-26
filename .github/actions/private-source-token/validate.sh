@@ -2,7 +2,7 @@
 set -euo pipefail
 invalid() { echo "Invalid private source token configuration: $1" >&2; exit 1; }
 [[ ${SOURCE_OWNER:-} =~ ^[A-Za-z0-9][A-Za-z0-9-]*$ ]] || invalid owner
-[[ ${SOURCE_REPOSITORY:-} =~ ^[A-Za-z0-9_.-]+$ ]] || invalid repository
+[[ ${SOURCE_REPOSITORY:-} =~ ^[A-Za-z0-9_.-]{1,100}$ ]] || invalid repository
 [[ $SOURCE_REPOSITORY != . && $SOURCE_REPOSITORY != .. ]] || invalid repository
 [[ ${SOURCE_VAULT_URL:-} =~ ^https://[A-Za-z0-9.-]+(:[0-9]+)?/?$ ]] || invalid vault-url
 [[ ${SOURCE_VAULT_ROLE:-} =~ ^[A-Za-z0-9_.-]+$ ]] || invalid vault-role
