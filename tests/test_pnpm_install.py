@@ -45,7 +45,7 @@ class PnpmInstall(unittest.TestCase):
 import json, os, pathlib, stat, sys, time
 config = pathlib.Path(os.environ.get("NPM_CONFIG_USERCONFIG", os.environ.get("npm_config_userconfig", str(pathlib.Path.home() / ".npmrc"))))
 body = config.read_text() if config.exists() else ""
-record = {"path": str(config), "mode": stat.S_IMODE(config.stat().st_mode), "body": body, "args": sys.argv[1:], "cwd": os.getcwd()}
+record = {"path": str(config), "mode": stat.S_IMODE(config.stat().st_mode), "body": body, "args": sys.argv[1:], "cwd": os.getcwd(), "token": os.environ["NPM_TOKEN"]}
 output = pathlib.Path(os.environ["INSTALL_RECORD"])
 pending = output.with_suffix(".pending")
 pending.write_text(json.dumps(record))
@@ -108,8 +108,10 @@ sys.exit(int(os.environ.get("INSTALL_EXIT", "0")))
         self.assertNotEqual(Path(record["path"]), self.config)
         self.assertFalse(Path(record["path"]).exists())
         self.assertIn(self.original, record["body"])
+        self.assertNotIn(self.inputs["npm-token"], record["body"])
+        self.assertEqual(record["token"], self.inputs["npm-token"])
         self.assertIn("@example:registry=https://packages.example/team/", record["body"])
-        self.assertIn('//packages.example/team/:_authToken="controlled-install-token"', record["body"])
+        self.assertIn('//packages.example/team/:_authToken=${NPM_TOKEN}', record["body"])
         self.assertEqual(record["args"], ["install", "--frozen-lockfile", "--ignore-scripts"])
         self.assertEqual(Path(record["cwd"]), self.project)
         self.assertNotIn(self.inputs["npm-token"], result.stdout + result.stderr)
@@ -148,16 +150,17 @@ sys.exit(int(os.environ.get("INSTALL_EXIT", "0")))
         self.assert_clean()
         record = json.loads(self.record.read_text())
         self.assertIn("custom-setting=preserved\n", record["body"])
-        self.assertIn('//packages.example:8080/team/:_authToken="controlled-install-token"', record["body"])
+        self.assertIn('//packages.example:8080/team/:_authToken=${NPM_TOKEN}', record["body"])
         self.assertEqual(custom.read_text(), "custom-setting=preserved")
 
-    def test_token_is_quoted_without_losing_special_characters(self):
-        self.inputs["npm-token"] = ' abc#def;"quoted"\\tail '
+    def test_token_is_passed_through_the_environment_without_config_interpolation(self):
+        self.inputs["npm-token"] = ' abc#def;"quoted"\\tail ${HOME} '
         result = self.run_action()
         self.assertEqual(result.returncode, 0, result.stderr)
         body = json.loads(self.record.read_text())["body"]
         auth = next(line.split("=", 1)[1] for line in body.splitlines() if ":_authToken=" in line)
-        self.assertEqual(json.loads(auth), self.inputs["npm-token"])
+        self.assertEqual(auth, "${NPM_TOKEN}")
+        self.assertEqual(json.loads(self.record.read_text())["token"], self.inputs["npm-token"])
         self.assert_clean()
 
     def test_repeated_installs_use_distinct_private_files(self):
