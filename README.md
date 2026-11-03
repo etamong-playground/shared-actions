@@ -44,8 +44,13 @@ steps:
       working-directory: .
 ```
 
-Runs `corepack enable`, writes auth to `~/.npmrc` (corepack-pinned pnpm ignores
-`pnpm config`), then `pnpm install --frozen-lockfile --ignore-scripts`.
+Requires Bash, Node.js and Corepack on the runner.
+Runs `corepack enable`, then `pnpm install --frozen-lockfile --ignore-scripts` with a private, mode-0600 user-config file scoped to that invocation.
+The file copies the selected existing user configuration, adds the supplied scoped-registry credentials, and is removed on success, failure or catchable interruption.
+The runner's original user config and project config stay unchanged; normal project-config precedence still applies.
+Registry URLs must use HTTP or HTTPS without embedded credentials, query, fragment or line breaks; the scope must be an npm-style `@scope`, and the token must be nonempty and contain no line breaks.
+Choose HTTPS when the token crosses an untrusted network.
+Existing `NPM_CONFIG_USERCONFIG` or `npm_config_userconfig` selection is preserved for the copy, while both variables point only the install process at the temporary file.
 
 ## `fleet-audit-register` — POST a version snapshot to a status/version-audit hub
 

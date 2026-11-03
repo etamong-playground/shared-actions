@@ -1,11 +1,3 @@
-# pnpm-install — composite action: install with a private scoped-registry
-#
-# Bring-your-own-infra: registry URL, scope, and token are inputs. Fetch the
-# token from your secret manager in the CALLING workflow and pass it in.
-#
-# WHY ~/.npmrc (not `pnpm config`): corepack-pinned pnpm reads auth from
-# ~/.npmrc; `pnpm config set` writes elsewhere and is ignored.
-
 name: pnpm-install
 description: "pnpm install with auth for a private scoped npm registry"
 
@@ -30,19 +22,12 @@ runs:
     - name: Enable corepack
       shell: bash
       run: corepack enable
-    - name: Write ~/.npmrc with scoped-registry auth
+    - name: Install dependencies with private registry configuration
       shell: bash
+      working-directory: ${{ inputs.working-directory }}
       env:
         REGISTRY_URL: ${{ inputs.registry-url }}
         SCOPE: ${{ inputs.scope }}
         NPM_TOKEN: ${{ inputs.npm-token }}
       run: |
-        REG_NO_SCHEME=$(printf '%s' "$REGISTRY_URL" | sed -E 's#^https?:##')
-        {
-          echo "${SCOPE}:registry=${REGISTRY_URL}"
-          echo "${REG_NO_SCHEME}:_authToken=${NPM_TOKEN}"
-        } >> ~/.npmrc
-    - name: Install dependencies
-      shell: bash
-      working-directory: ${{ inputs.working-directory }}
-      run: pnpm install --frozen-lockfile --ignore-scripts
+        bash "$GITHUB_ACTION_PATH/install.sh"
