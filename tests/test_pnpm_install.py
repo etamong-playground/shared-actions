@@ -80,10 +80,15 @@ sys.exit(int(os.environ.get("INSTALL_EXIT", "0")))
             env[key] = self.inputs[match.group(1)] if match else value
         return env
 
+    def step_script(self, step):
+        path = self.root / "step.sh"
+        path.write_text(step["run"])
+        return str(path)
+
     def run_action(self):
         for step in self.steps:
             result = subprocess.run(
-                ["bash", "-e", "-o", "pipefail", "-c", step["run"]],
+                ["bash", "-e", "-o", "pipefail", self.step_script(step)],
                 env=self.step_env(step), cwd=self.project, capture_output=True, text=True,
             )
             if result.returncode:
@@ -104,7 +109,7 @@ sys.exit(int(os.environ.get("INSTALL_EXIT", "0")))
         self.assertFalse(Path(record["path"]).exists())
         self.assertIn(self.original, record["body"])
         self.assertIn("@example:registry=https://packages.example/team/", record["body"])
-        self.assertIn("//packages.example/team/:_authToken=controlled-install-token", record["body"])
+        self.assertIn('//packages.example/team/:_authToken="controlled-install-token"', record["body"])
         self.assertEqual(record["args"], ["install", "--frozen-lockfile", "--ignore-scripts"])
         self.assertEqual(Path(record["cwd"]), self.project)
         self.assertNotIn(self.inputs["npm-token"], result.stdout + result.stderr)
@@ -143,8 +148,17 @@ sys.exit(int(os.environ.get("INSTALL_EXIT", "0")))
         self.assert_clean()
         record = json.loads(self.record.read_text())
         self.assertIn("custom-setting=preserved\n", record["body"])
-        self.assertIn("//packages.example:8080/team/:_authToken=controlled-install-token", record["body"])
+        self.assertIn('//packages.example:8080/team/:_authToken="controlled-install-token"', record["body"])
         self.assertEqual(custom.read_text(), "custom-setting=preserved")
+
+    def test_token_is_quoted_without_losing_special_characters(self):
+        self.inputs["npm-token"] = ' abc#def;"quoted"\\tail '
+        result = self.run_action()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        body = json.loads(self.record.read_text())["body"]
+        auth = next(line.split("=", 1)[1] for line in body.splitlines() if ":_authToken=" in line)
+        self.assertEqual(json.loads(auth), self.inputs["npm-token"])
+        self.assert_clean()
 
     def test_repeated_installs_use_distinct_private_files(self):
         paths = []
@@ -157,24 +171,26 @@ sys.exit(int(os.environ.get("INSTALL_EXIT", "0")))
     def assert_interrupt_cleanup(self, signum):
         self.env["INSTALL_WAIT"] = "1"
         for step in self.steps[:-1]:
-            result = subprocess.run(["bash", "-e", "-c", step["run"]], env=self.step_env(step), cwd=self.project, capture_output=True)
+            result = subprocess.run(["bash", "-e", self.step_script(step)], env=self.step_env(step), cwd=self.project, capture_output=True)
             self.assertEqual(result.returncode, 0)
         step = self.steps[-1]
-        process = subprocess.Popen(["bash", "-e", "-c", step["run"]], env=self.step_env(step), cwd=self.project, stdout=subprocess.PIPE, stderr=subprocess.PIPE, start_new_session=True)
+        process = subprocess.Popen(["bash", "-e", self.step_script(step)], env=self.step_env(step), cwd=self.project, stdout=subprocess.PIPE, stderr=subprocess.PIPE, start_new_session=True)
         try:
             deadline = time.monotonic() + 5
             while not self.record.exists() and time.monotonic() < deadline:
                 time.sleep(0.01)
             self.assertTrue(self.record.exists(), "fixture install did not start")
-            os.killpg(process.pid, signum)
+            os.kill(process.pid, signum)
             process.communicate(timeout=5)
             self.assertNotEqual(process.returncode, 0)
             self.assert_clean()
             self.assertFalse(Path(json.loads(self.record.read_text())["path"]).exists())
         finally:
-            if process.poll() is None:
+            try:
                 os.killpg(process.pid, signal.SIGKILL)
-                process.communicate()
+            except ProcessLookupError:
+                pass
+            process.communicate()
 
     def test_termination_cleans_the_private_configuration(self):
         self.assert_interrupt_cleanup(signal.SIGTERM)

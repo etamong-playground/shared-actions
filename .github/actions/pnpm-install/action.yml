@@ -30,4 +30,4 @@ runs:
         SCOPE: ${{ inputs.scope }}
         NPM_TOKEN: ${{ inputs.npm-token }}
       run: |
-        bash "$GITHUB_ACTION_PATH/install.sh"
+        exec bash "$GITHUB_ACTION_PATH/install.sh"

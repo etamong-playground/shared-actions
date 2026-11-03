@@ -39,7 +39,11 @@ source_config=${NPM_CONFIG_USERCONFIG:-${npm_config_userconfig:-${HOME:?}/.npmrc
 if [[ -e "$source_config" ]]; then
   cat -- "$source_config" > "$install_config"
 fi
-printf '\n%s:registry=%s\n%s:_authToken=%s\n' "$SCOPE" "$registry" "${registry#*:}" "$NPM_TOKEN" >> "$install_config"
+node - "$install_config" "$registry" <<'JS'
+const fs = require("node:fs");
+const [config, registry] = process.argv.slice(2);
+fs.appendFileSync(config, `\n${process.env.SCOPE}:registry=${registry}\n${registry.slice(registry.indexOf(":") + 1)}:_authToken=${JSON.stringify(process.env.NPM_TOKEN)}\n`);
+JS
 
 NPM_CONFIG_USERCONFIG="$install_config" npm_config_userconfig="$install_config" \
   pnpm install --frozen-lockfile --ignore-scripts &
