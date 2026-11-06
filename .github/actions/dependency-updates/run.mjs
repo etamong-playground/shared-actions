@@ -1,6 +1,7 @@
 import { chmod, mkdir, mkdtemp, readFile, rm } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { summarize, publish } from './summary.mjs';
 import { validateTools } from './tools.mjs';
 import { runCommand } from './process.mjs';
 import { github, inputs, preflight, readPolicy, validateEvent, verifyArtifacts, verifyCaller } from './policy.mjs';
@@ -19,6 +20,7 @@ export function childEnvironment(env, config, policy, work, directory) {
     RENOVATE_CONFIG_FILE: join(action, 'config.cjs'),
     RENOVATE_BASE_DIR: join(directory, 'work'), RENOVATE_CACHE_DIR: join(directory, 'cache'),
     RENOVATE_DRY_RUN: config.dryRun ? 'full' : '', LOG_LEVEL: 'warn',
+    RENOVATE_REPORT_TYPE: 'file', RENOVATE_REPORT_PATH: join(directory, 'report.json'),
   });
   const settings = [{ key: 'credential.helper', value: '' }, { key: 'core.hooksPath', value: '/dev/null' }];
   for (const repo of config.sources) {
@@ -54,6 +56,7 @@ export async function run(env, { request = fetch, execute = executeEngine, signa
     if (signal.aborted) throw new Error('Dependency update interrupted');
     await execute(childEnvironment(env, config, policy, work, directory), signal);
     if (!config.dryRun) await verifyArtifacts(config, pages, work.pausedHeads);
+    await publish(await summarize(join(directory, 'report.json'), config, work, policy), env);
     console.info(`Dependency updates completed (${config.dryRun ? 'dry-run' : 'draft PRs'}; ${work.maintenance ? 'maintenance' : 'normal'} mode)`);
   } finally {
     await rm(directory, { recursive: true, force: true });
