@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { mkdtemp, mkdir, readFile, readdir, rm, symlink, writeFile } from 'node:fs/promises';
 import { resolve, join } from 'node:path';
-import { inputs, validateEvent, readPolicy, github, preflight, configuration, verifyArtifacts } from '../.github/actions/dependency-updates/policy.mjs';
+import { inputs, validateEvent, readPolicy, github, preflight, configuration, verifyArtifacts, verifyCaller } from '../.github/actions/dependency-updates/policy.mjs';
 import { run, childEnvironment } from '../.github/actions/dependency-updates/run.mjs';
 
 const env = {
@@ -11,9 +11,13 @@ const env = {
   GITHUB_REF: 'refs/heads/main', GITHUB_EVENT_NAME: 'workflow_dispatch',
 };
 const event = { repository: { full_name: env.GITHUB_REPOSITORY, default_branch: 'main' } };
-const own = (number, extra = {}) => ({ number, title: 'Update dependency', body: '', labels: [], user: { login: 'updater[bot]' }, head: { ref: `dependency-updates/dep-${number}`, sha: String(number).repeat(40).slice(0, 40) }, ...extra });
+const own = (number, extra = {}) => ({ number, title: 'Update dependency', body: '', labels: [], base: { sha: 'a'.repeat(40) }, user: { login: 'updater[bot]' }, head: { repo: { full_name: 'example/service' }, ref: `dependency-updates/dep-${number}`, sha: String(number).repeat(40).slice(0, 40) }, ...extra });
 const config = () => inputs(env);
-const pages = (values = {}) => async path => values[path] ?? (/^pulls\/\d+\/commits$/.test(path) ? [{ commit: { author: { email: 'example-service@dependency-updates.invalid' }, committer: { email: 'example-service@dependency-updates.invalid' } } }] : []);
+const pages = (values = {}) => {
+  const read = async path => values[path] ?? (/^pulls\/\d+\/commits$/.test(path) ? [{ commit: { author: { email: 'example-service@dependency-updates.invalid' }, committer: { email: 'example-service@dependency-updates.invalid' } } }] : []);
+  read.manifest = async () => '{}';
+  return read;
+};
 const now = Date.parse('2026-11-05T00:00:00Z');
 
 async function fixture(t) {
@@ -106,12 +110,14 @@ test('configuration forces safety controls and capacity modes over presentation 
 test('artifact statuses are checked on the exact current update head and read failures stop', async () => {
   const pr = own(3);
   const requested = [];
-  await assert.rejects(verifyArtifacts(config(), async path => {
+  const failing = async path => {
     requested.push(path);
     return path === 'pulls?state=open' ? [pr] : path.endsWith('/files') ? [{ filename: 'package.json' }] : [{ context: 'renovate/artifacts', state: 'failure' }];
-  }), /artifact generation failed/);
+  };
+  failing.manifest = async () => '{}';
+  await assert.rejects(verifyArtifacts(config(), failing), /artifact generation failed/);
   assert.deepEqual(requested, ['pulls?state=open', 'pulls/3/files', `commits/${pr.head.sha}/statuses`]);
-  await verifyArtifacts(config(), pages({ 'pulls?state=open': [pr], 'pulls/3/files': [{ filename: 'package.json' }], [`commits/${pr.head.sha}/statuses`]: [{ context: 'renovate/artifacts', state: 'success' }] }));
+  await verifyArtifacts(config(), pages({ 'pulls?state=open': [pr], 'pulls/3/files': [{ filename: 'package.json' }], [`commits/${pr.head.sha}/statuses`]: [{ context: 'renovate/artifacts', state: 'success', creator: { login: 'updater[bot]' } }] }));
 });
 
 test('worker receives only explicit credentials and no inherited executable configuration', () => {
@@ -130,7 +136,7 @@ for (const failure of [false, true]) test(`transient state is removed after engi
   const runtime = { ...env, GITHUB_WORKSPACE: root, GITHUB_EVENT_PATH: join(root, 'event.json'), UPDATE_POLICY_PATH: 'policy.json', RUNNER_TEMP: root, PATH: process.env.PATH };
   let directory;
   const operation = run(runtime, {
-    request: async () => ({ ok: true, json: async () => [] }),
+    request: async url => ({ ok: true, json: async () => url.includes('/installation/') ? { total_count: 1, repositories: [{ full_name: env.GITHUB_REPOSITORY }] } : url.endsWith('/graphql') ? { data: { viewer: { login: env.UPDATE_BOT } } } : [] }),
     tools: async () => {},
     execute: async child => {
       directory = child.TMPDIR;
@@ -169,9 +175,54 @@ test('human fixes pause their ecosystem and manual rebase cannot override preser
 test('published update files and Go compiler directives stay within the contract', async () => {
   const pr = own(5, { base: { sha: 'a'.repeat(40) } });
   await assert.rejects(verifyArtifacts(config(), pages({ 'pulls?state=open': [pr], 'pulls/5/files': [{ filename: '.github/workflows/release.yml' }] })), /outside/);
-  const api = pages({ 'pulls?state=open': [pr], 'pulls/5/files': [{ filename: 'go.mod' }] });
-  api.goDirectives = async (path, sha) => sha === pr.base.sha ? 'go 1.25.0' : 'go 1.26.0';
+  const api = pages({ 'pulls?state=open': [pr], 'pulls/5/files': [{ filename: 'go.mod' }], [`commits/${pr.head.sha}/statuses`]: [{ context: 'renovate/artifacts', state: 'success', creator: { login: 'updater[bot]' } }] });
+  api.manifest = async (path, sha) => sha === pr.base.sha ? 'go 1.25.0' : 'go 1.26.0';
   await assert.rejects(verifyArtifacts(config(), api), /toolchain directives/);
-  api.goDirectives = async () => 'go 1.25.0';
+  api.manifest = async () => 'go 1.25.0';
   await verifyArtifacts(config(), api);
+});
+
+
+test('a missing or unrelated artifact publication is not success', async () => {
+  const pr = own(6);
+  for (const statuses of [[], [{ context: 'renovate/artifacts', state: 'success', creator: { login: 'other[bot]' } }]]) {
+    await assert.rejects(verifyArtifacts(config(), pages({ 'pulls?state=open': [pr], 'pulls/6/files': [{ filename: 'package.json' }], [`commits/${pr.head.sha}/statuses`]: statuses })), /artifact generation failed/);
+  }
+});
+
+test('the commits endpoint ceiling stops inspection before native update selection', async () => {
+  const commit = { commit: { author: { email: 'example-service@dependency-updates.invalid' }, committer: { email: 'example-service@dependency-updates.invalid' } } };
+  await assert.rejects(preflight(config(), pages({ 'pulls?state=open': [own(7)], 'pulls/7/commits': Array(250).fill(commit) }), now), /complete update branch authors/);
+});
+
+test('package manager and runtime declarations cannot change in published PRs', async () => {
+  const pr = own(8);
+  const api = pages({ 'pulls?state=open': [pr], 'pulls/8/files': [{ filename: 'package.json' }], [`commits/${pr.head.sha}/statuses`]: [{ context: 'renovate/artifacts', state: 'success', creator: { login: 'updater[bot]' } }] });
+  api.manifest = async (path, sha) => JSON.stringify({ packageManager: sha === pr.base.sha ? 'pnpm@10.28.0' : 'pnpm@11.0.0' });
+  await assert.rejects(verifyArtifacts(config(), api), /runtime declarations/);
+});
+
+
+test('unchanged paused human heads are retained without claiming new artifact evidence', async () => {
+  const pr = own(9);
+  const paused = [{ number: pr.number, sha: pr.head.sha }];
+  await verifyArtifacts(config(), pages({ 'pulls?state=open': [pr] }), paused);
+  const changed = { ...pr, head: { ...pr.head, sha: 'b'.repeat(40) } };
+  await assert.rejects(verifyArtifacts(config(), pages({ 'pulls?state=open': [changed] }), paused), /complete update artifacts/);
+});
+
+test('foreign ecosystem work pauses matching existing bot heads while Go stays eligible', async () => {
+  const pr = own(1);
+  const result = await preflight(config(), pages({ 'pulls?state=open': [pr, { number: 2 }], 'pulls/2/files': [{ filename: 'web/package.json' }], 'pulls/1/files': [{ filename: 'web/pnpm-lock.yaml' }] }), now);
+  assert.deepEqual(result.managers, ['gomod']);
+  assert.deepEqual(result.pausedHeads, [{ number: pr.number, sha: pr.head.sha }]);
+});
+
+
+test('actual caller identity and one-repository installation scope must match before work', async () => {
+  const request = (repos, login) => async url => ({ ok: true, json: async () => url.includes('/installation/') ? { total_count: repos.length, repositories: repos.map(full_name => ({ full_name })) } : { data: { viewer: { login } } } });
+  await verifyCaller(config(), request(['example/service'], 'updater[bot]'));
+  await assert.rejects(verifyCaller(config(), request(['example/service', 'example/other'], 'updater[bot]')), /limited/);
+  await assert.rejects(verifyCaller(config(), request(['example/service'], 'different[bot]')), /configured bot/);
+  await assert.rejects(verifyCaller(config(), async () => ({ ok: false })), /Cannot verify/);
 });

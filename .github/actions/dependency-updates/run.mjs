@@ -3,7 +3,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { validateTools } from './tools.mjs';
 import { runCommand } from './process.mjs';
-import { github, inputs, preflight, readPolicy, validateEvent, verifyArtifacts } from './policy.mjs';
+import { github, inputs, preflight, readPolicy, validateEvent, verifyArtifacts, verifyCaller } from './policy.mjs';
 
 const action = dirname(fileURLToPath(import.meta.url));
 const inputNames = ['UPDATE_BOT', 'UPDATE_DRY_RUN', 'UPDATE_PR_LIMIT', 'UPDATE_WRITER_TOKEN', 'UPDATE_SOURCE_TOKEN', 'UPDATE_SOURCE_REPOSITORIES', 'UPDATE_PACKAGE_TOKEN', 'UPDATE_REGISTRY_URL', 'UPDATE_PACKAGE_SCOPE', 'GITHUB_REPOSITORY'];
@@ -42,6 +42,7 @@ export async function run(env, { request = fetch, execute = executeEngine, signa
   let event;
   try { event = JSON.parse(await readFile(env.GITHUB_EVENT_PATH, 'utf8')); } catch { throw new Error('Cannot read caller event'); }
   validateEvent(config, event, env);
+  await verifyCaller(config, request, signal);
   const policy = await readPolicy(env.GITHUB_WORKSPACE, env.UPDATE_POLICY_PATH);
   const pages = github(config, request, signal);
   const work = await preflight(config, pages);
@@ -52,7 +53,7 @@ export async function run(env, { request = fetch, execute = executeEngine, signa
     await mkdir(join(directory, 'home'));
     if (signal.aborted) throw new Error('Dependency update interrupted');
     await execute(childEnvironment(env, config, policy, work, directory), signal);
-    if (!config.dryRun) await verifyArtifacts(config, pages);
+    if (!config.dryRun) await verifyArtifacts(config, pages, work.pausedHeads);
     console.info(`Dependency updates completed (${config.dryRun ? 'dry-run' : 'draft PRs'}; ${work.maintenance ? 'maintenance' : 'normal'} mode)`);
   } finally {
     await rm(directory, { recursive: true, force: true });
