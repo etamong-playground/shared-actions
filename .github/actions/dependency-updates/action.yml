@@ -1,0 +1,57 @@
+name: Dependency update PRs
+description: Propose bounded npm/pnpm and Go dependency updates with caller-owned credentials.
+inputs:
+  caller-token:
+    description: Short-lived caller-only GitHub App token; read-only for dry-runs, appropriately downscoped write access otherwise.
+    required: true
+  bot-login:
+    description: Expected installation identity, including the [bot] suffix.
+    required: true
+  dry-run:
+    description: Compute proposed changes without creating branches or PRs.
+    default: 'true'
+  write-enabled:
+    description: Explicit caller opt-in required for a write run.
+    default: 'false'
+  max-open-prs:
+    description: Worker PR budget, from 1 to 10; existing PR maintenance continues at capacity.
+    default: '3'
+  policy-path:
+    description: Restricted JSON policy relative to the caller checkout.
+    default: .github/dependency-updates.json
+  package-token:
+    description: Optional separate read-only npm registry credential.
+    required: false
+  registry-url:
+    description: HTTPS npm registry URL ending in a slash.
+    required: false
+  package-scope:
+    description: Explicit npm scope served by the configured registry.
+    required: false
+  source-token:
+    description: Optional separate read-only credential for the explicit private GitHub repositories.
+    required: false
+  source-repositories:
+    description: JSON array of exact owner/repository selectors for private sources.
+    default: '[]'
+runs:
+  using: composite
+  steps:
+    - name: Prepare immutable engine dependencies
+      shell: bash
+      run: exec node "$GITHUB_ACTION_PATH/prepare.mjs"
+    - name: Propose dependency updates
+      shell: bash
+      env:
+        UPDATE_WRITER_TOKEN: ${{ inputs.caller-token }}
+        UPDATE_BOT: ${{ inputs.bot-login }}
+        UPDATE_DRY_RUN: ${{ inputs.dry-run }}
+        UPDATE_WRITE_ENABLED: ${{ inputs.write-enabled }}
+        UPDATE_PR_LIMIT: ${{ inputs.max-open-prs }}
+        UPDATE_POLICY_PATH: ${{ inputs.policy-path }}
+        UPDATE_PACKAGE_TOKEN: ${{ inputs.package-token }}
+        UPDATE_REGISTRY_URL: ${{ inputs.registry-url }}
+        UPDATE_PACKAGE_SCOPE: ${{ inputs.package-scope }}
+        UPDATE_SOURCE_TOKEN: ${{ inputs.source-token }}
+        UPDATE_SOURCE_REPOSITORIES: ${{ inputs.source-repositories }}
+      run: exec node "$GITHUB_ACTION_PATH/run.mjs"

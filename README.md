@@ -142,6 +142,13 @@ RUN --mount=type=secret,id=github,target=/root/.netrc,required=true go mod downl
 The [Vault action](https://github.com/hashicorp/vault-action) owns Kubernetes authentication and secret masking.
 The [GitHub token action](https://github.com/actions/create-github-app-token) owns installation-token creation and revocation.
 
+## `dependency-updates` - opt-in draft dependency PRs
+
+Propose npm/pnpm and Go manifest/lockfile updates with a pinned native worker and caller-owned short-lived credentials.
+Dry-run is the default; maintenance continues at the open-PR limit, human edits pause their ecosystem, and the action never merges or enables a schedule.
+Use the [setup and recovery guide](docs/dependency-updates.md) and [manual caller example](examples/dependency-updates/caller.yml) to qualify a caller before writes.
+The caller supplies a trusted runner, matching tool versions, serialized jobs, credential issuance/revocation and downstream CI.
+
 ## Notes
 
 - **Self-hosted runner**: set the `runner` input when your registry / secret manager /
