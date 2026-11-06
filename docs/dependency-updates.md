@@ -31,7 +31,7 @@ No credential is needed for ordinary public npm/Go dependencies beyond the calle
 ## Start with a manual dry-run
 
 1. Add a restricted `.github/dependency-updates.json`, using the [policy example](../examples/dependency-updates/policy.json).
-2. Adapt the [caller example](../examples/dependency-updates/caller.yml) to existing credentials and installed tool versions, replacing `REVIEWED_SHARED_ACTION_SHA` with a reviewed immutable shared-actions commit.
+2. Adapt the [caller example](../examples/dependency-updates/caller.yml) to existing credentials and installed tool versions, retaining a reviewed immutable shared-actions commit when updating its pin.
    The example assumes an already authorized caller-owned App credential configuration; retain an established broker instead of distributing new keys merely to copy it.
 3. Dispatch on the default branch with `write=false`.
    Inspect the bounded JSON preview in the job summary or the action's `summary` output: it identifies proposed dependency/version changes and scanned manifest counts, including an explicit empty result.
