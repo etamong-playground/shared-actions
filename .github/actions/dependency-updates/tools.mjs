@@ -2,6 +2,7 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { readFile, realpath } from 'node:fs/promises';
 import { dirname, join, sep } from 'node:path';
+import { extractPackageFile } from './runtime/node_modules/renovate/dist/modules/manager/gomod/extract.js';
 import { minimatch } from './runtime/node_modules/minimatch/dist/esm/index.js';
 
 const exec = promisify(execFile);
@@ -33,6 +34,7 @@ export async function validateTools(workspace, policy, managers, inspect) {
     for (const path of paths.filter(path => /(^|\/)package\.json$/.test(path))) {
       try { manifests.set(path, JSON.parse(await read(path))); } catch { throw new Error('Cannot read caller package manifest'); }
     }
+    const contains = path => paths.includes(path);
     for (const [path, manifest] of manifests) {
       if (!manifest || typeof manifest !== 'object' || Array.isArray(manifest)) throw new Error('Invalid caller package manifest');
       if (!manifest.packageManager && !['dependencies', 'devDependencies', 'optionalDependencies', 'peerDependencies'].some(key => manifest[key])) continue;
@@ -49,6 +51,22 @@ export async function validateTools(workspace, policy, managers, inspect) {
       const match = typeof declaration === 'string' && /^(npm|pnpm)@(\d+\.\d+\.\d+)(?:\+sha(?:224|256|384|512)\.[a-fA-F0-9]+)?$/.exec(declaration);
       if (!match) throw new Error('Caller packageManager must pin an exact npm or pnpm version');
       const [, name, version] = match;
+      let directory = dirname(path);
+      let locked = false;
+      while (true) {
+        for (const file of name === 'pnpm' ? ['pnpm-lock.yaml'] : ['package-lock.json', 'npm-shrinkwrap.json']) {
+          const candidate = join(directory, file);
+          if (contains(candidate)) {
+            if (!(await read(candidate)).trim()) throw new Error('Managed dependency lockfiles must be nonempty');
+            locked = true; break;
+          }
+        }
+        if (locked) break;
+        const parentDirectory = dirname(directory);
+        if (parentDirectory === directory) break;
+        directory = parentDirectory;
+      }
+      if (!locked) throw new Error('Managed npm/pnpm projects require a committed lockfile');
       if (versions.has(name) && versions.get(name) !== version) throw new Error('One worker run requires one installed version per package manager');
       versions.set(name, version);
     }
@@ -60,6 +78,10 @@ export async function validateTools(workspace, policy, managers, inspect) {
     const current = version.slice(1).map(value => Number(value ?? 0));
     for (const path of paths.filter(path => /(^|\/)(go\.mod|go\.work)$/.test(path))) {
       const body = await read(path);
+      if (path.endsWith('go.mod') && extractPackageFile(body)?.deps.some(dependency => dependency.datasource === 'go' && dependency.currentValue)) {
+        const sum = path.slice(0, -3) + 'sum';
+        if (!paths.includes(sum) || !(await read(sum)).trim()) throw new Error('Managed Go dependencies require a nonempty committed go.sum');
+      }
       for (const directive of body.matchAll(/^(?:go|toolchain go)\s*(\d+)\.(\d+)(?:\.(\d+))?\s*$/gm)) {
         const required = directive.slice(1).map(value => Number(value ?? 0));
         const different = required.findIndex((value, index) => value !== current[index]);
