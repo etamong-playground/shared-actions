@@ -59,7 +59,15 @@ test('real Git applies private reader headers only to the exact repository path'
   const runtimeEnv = childEnvironment(input, selected, {}, { managers: ['gomod'] }, root);
   const { GlobalConfig } = await native('config/global.js');
   const { getChildEnv } = await native('util/exec/utils.js');
-  GlobalConfig.set({ exposeAllEnv: false, customEnvVariables: configuration(selected, {}, { managers: ['gomod'], count: 0 }, runtimeEnv).customEnvVariables });
+  const { parseConfigs } = await native('workers/global/config/parse/index.js');
+  const previous = Object.fromEntries(Object.keys(runtimeEnv).map(key => [key, process.env[key]]));
+  Object.assign(process.env, runtimeEnv);
+  try { await parseConfigs(runtimeEnv, []); } finally {
+    for (const [key, value] of Object.entries(previous)) {
+      if (value === undefined) delete process.env[key]; else process.env[key] = value;
+    }
+  }
+  GlobalConfig.set({ exposeAllEnv: false });
   const env = { ...getChildEnv(), PATH: process.env.PATH };
   for (const url of ['https://github.com/example/private', 'https://github.com/example/private.git', 'https://writer@github.com/example/private.git']) {
     assert.equal(command('git', ['config', '--get-urlmatch', 'http.extraHeader', url], { env }), `Authorization: Basic ${Buffer.from('x-access-token:synthetic-source').toString('base64')}`);
@@ -156,4 +164,17 @@ test('subprocess timeout rejects and does not print credential-bearing subproces
   const root = await fixture(t);
   const signal = new AbortController().signal;
   await assert.rejects(runCommand(process.execPath, ['-e', "console.log('synthetic-secret');setInterval(()=>{},1000)"], { env: { PATH: process.env.PATH }, cwd: root, signal, timeout: 30 }), /timed out/);
+});
+
+
+test('native extraction and package rules leave package-manager declarations disabled', async () => {
+  const { extractPackageJson } = await native('modules/manager/npm/extract/common/package-file.js');
+  const { applyPackageRules } = await native('util/package-rules/index.js');
+  const extracted = extractPackageJson({ packageManager: 'pnpm@10.28.0', devEngines: { packageManager: { name: 'pnpm', version: '10.28.0' } } }, 'package.json');
+  assert.deepEqual(extracted.deps.map(dep => dep.depType).sort(), ['devEngines.packageManager', 'packageManager']);
+  const rules = configuration(inputs(input), {}, { managers: ['npm'], count: 0 }).force.packageRules;
+  for (const dep of extracted.deps) {
+    const configured = await applyPackageRules({ ...dep, manager: 'npm', packageRules: rules });
+    assert.equal(configured.enabled, false);
+  }
 });

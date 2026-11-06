@@ -1,5 +1,6 @@
 import { readFile, realpath } from 'node:fs/promises';
 import { resolve, sep } from 'node:path';
+import { isDeepStrictEqual } from 'node:util';
 
 const repositoryPattern = /^[A-Za-z0-9][A-Za-z0-9-]{0,38}\/(?!\.{1,2}$)[A-Za-z0-9_.-]{1,100}$/;
 const manifest = {
@@ -58,6 +59,23 @@ export async function readPolicy(workspace, filename) {
   return policy;
 }
 
+export async function verifyCaller(config, request = fetch, signal) {
+  const read = async (url, extra = {}) => {
+    try {
+      const response = await request(url, {
+        headers: { Authorization: `Bearer ${config.token}`, Accept: 'application/vnd.github+json' },
+        redirect: 'error', signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(30000)]) : AbortSignal.timeout(30000), ...extra,
+      });
+      if (!response.ok) throw new Error();
+      return await response.json();
+    } catch { throw new Error('Cannot verify caller installation identity and scope'); }
+  };
+  const scope = await read('https://api.github.com/installation/repositories?per_page=100');
+  if (scope.total_count !== 1 || !Array.isArray(scope.repositories) || scope.repositories.length !== 1 || scope.repositories[0].full_name?.toLowerCase() !== config.repository.toLowerCase()) throw new Error('Caller token must be limited to this repository');
+  const identity = await read('https://api.github.com/graphql', { method: 'POST', body: JSON.stringify({ query: 'query { viewer { login } }' }) });
+  if (identity.errors?.length || identity.data?.viewer?.login !== config.bot) throw new Error('Caller token does not match the configured bot');
+}
+
 export function github(config, request = fetch, signal) {
   const pages = async function(path) {
     const items = [];
@@ -65,7 +83,7 @@ export function github(config, request = fetch, signal) {
       let response;
       try { response = await request(`https://api.github.com/repos/${config.repository}/${path}${path.includes('?') ? '&' : '?'}per_page=100&page=${page}`, {
         headers: { Authorization: `Bearer ${config.token}`, Accept: 'application/vnd.github+json' },
-        signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(30000)]) : AbortSignal.timeout(30000),
+        redirect: 'error', signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(30000)]) : AbortSignal.timeout(30000),
       }); } catch { throw new Error('GitHub inspection interrupted or unavailable'); }
       if (!response.ok) throw new Error(`GitHub inspection failed (HTTP ${response.status})`);
       let values;
@@ -76,26 +94,26 @@ export function github(config, request = fetch, signal) {
     }
     throw new Error('GitHub inspection exceeded its pagination limit');
   };
-  pages.goDirectives = async (filename, sha) => {
+  pages.manifest = async (filename, sha) => {
     if (!/^[a-f0-9]{40}$/.test(sha ?? '') || filename.split('/').some(part => !part || part === '.' || part === '..' || part.includes('\\'))) throw new Error('Invalid Go manifest identity');
     let result;
     try {
       const path = filename.split('/').map(encodeURIComponent).join('/');
       const response = await request(`https://api.github.com/repos/${config.repository}/contents/${path}?ref=${sha}`, {
         headers: { Authorization: `Bearer ${config.token}`, Accept: 'application/vnd.github+json' },
-        signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(30000)]) : AbortSignal.timeout(30000),
+        redirect: 'error', signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(30000)]) : AbortSignal.timeout(30000),
       });
       if (!response.ok) throw new Error();
       result = await response.json();
     } catch { throw new Error('Cannot inspect complete Go directives'); }
     if (result.type !== 'file' || result.encoding !== 'base64' || !Number.isSafeInteger(result.size) || result.size > 1024 * 1024 || typeof result.content !== 'string') throw new Error('Cannot inspect complete Go directives');
-    return Buffer.from(result.content, 'base64').toString('utf8').split('\n').map(line => line.trim()).filter(line => /^(?:go|toolchain)\s/.test(line)).join('\n');
+    return Buffer.from(result.content, 'base64').toString('utf8');
   };
   return pages;
 }
 
 export function owned(pr, config) {
-  return pr.user?.login === config.bot && pr.head?.ref?.startsWith('dependency-updates/');
+  return pr.user?.login === config.bot && pr.head?.ref?.startsWith('dependency-updates/') && pr.head.repo?.full_name?.toLowerCase() === config.repository.toLowerCase();
 }
 
 export async function preflight(config, pages, now = Date.now()) {
@@ -111,6 +129,8 @@ export async function preflight(config, pages, now = Date.now()) {
   }
   const paused = new Set();
   let count = 0;
+  const pausedHeads = [];
+  const cleanOwned = [];
   const open = await pages('pulls?state=open');
   for (const pr of open) {
     if (!Number.isSafeInteger(pr.number) || pr.number < 1) throw new Error('Invalid PR identity');
@@ -119,14 +139,16 @@ export async function preflight(config, pages, now = Date.now()) {
       if (typeof pr.title !== 'string' || (pr.labels !== undefined && !Array.isArray(pr.labels)) || (pr.body !== null && pr.body !== undefined && typeof pr.body !== 'string')) throw new Error('Invalid update PR metadata');
       if (pr.title.startsWith('rebase!') || pr.labels?.some(label => label.name === 'rebase') || /- \[[xX]\] <!-- rebase-check -->/.test(pr.body ?? '')) throw new Error('Manual rebase controls require explicit branch disposition');
       const commits = await pages(`pulls/${pr.number}/commits`);
-      if (!commits.length) throw new Error('Cannot inspect update branch authors');
+      if (!commits.length || commits.length >= 250) throw new Error('Cannot inspect complete update branch authors');
       const email = `${config.repository.replace('/', '-')}@dependency-updates.invalid`;
       let edited = false;
       for (const commit of commits) {
         if (typeof commit.commit?.author?.email !== 'string' || typeof commit.commit?.committer?.email !== 'string') throw new Error('Cannot inspect update branch authors');
         edited ||= commit.commit.author.email !== email || commit.commit.committer.email !== email;
       }
-      if (!edited) continue;
+      if (!/^[a-f0-9]{40}$/.test(pr.head.sha ?? '')) throw new Error('Invalid update head');
+      if (!edited) { cleanOwned.push(pr); continue; }
+      pausedHeads.push({ number: pr.number, sha: pr.head.sha });
     }
     if (!Number.isSafeInteger(pr.number) || pr.number < 1) throw new Error('Invalid PR identity');
     const files = await pages(`pulls/${pr.number}/files`);
@@ -139,9 +161,14 @@ export async function preflight(config, pages, now = Date.now()) {
       }
     }
   }
+  if (paused.size) for (const pr of cleanOwned) {
+    const files = await pages(`pulls/${pr.number}/files`);
+    if (!files.length || files.length >= 3000) throw new Error('Cannot inspect paused update scope');
+    if (files.some(file => [...paused].some(manager => manifest[manager].test(file.filename ?? '') || manifest[manager].test(file.previous_filename ?? '')))) pausedHeads.push({ number: pr.number, sha: pr.head.sha });
+  }
   const managers = Object.keys(manifest).filter(manager => !paused.has(manager));
   if (!managers.length) throw new Error('All dependency ecosystems have other open work');
-  return { managers, count, maintenance: count >= config.limit };
+  return { managers, count, maintenance: count >= config.limit, pausedHeads };
 }
 
 export function configuration(config, policy, work, runtime = {}) {
@@ -164,6 +191,7 @@ export function configuration(config, policy, work, runtime = {}) {
     force: {
       ...policy, enabledManagers: work.managers, mode, branchPrefix: 'dependency-updates/',
       ignorePaths: ['**/node_modules/**', '**/bower_components/**', ...(policy.ignorePaths ?? [])],
+      statusCheckWhen: { artifactError: 'always' }, statusCheckNames: { artifactError: 'renovate/artifacts' },
       draftPR: true, automerge: false, platformAutomerge: false, autoApprove: false,
       dependencyDashboard: false, dependencyDashboardApproval: false,
       suppressNotifications: ['configErrorIssue'], configMigration: false,
@@ -177,28 +205,41 @@ export function configuration(config, policy, work, runtime = {}) {
         { matchManagers: ['npm'], matchUpdateTypes: ['minor', 'patch'], groupName: 'npm non-major dependencies' },
         { matchManagers: ['gomod'], matchUpdateTypes: ['minor', 'patch'], groupName: 'Go non-major dependencies' },
         ...(config.scope || config.sources.length ? [{ matchPackageNames: [...(config.scope ? [`${config.scope}/**`] : []), ...config.sources.map(repo => `github.com/${repo}{,/**}`)], groupName: null }] : []),
+        { matchManagers: ['npm'], matchDepTypes: ['packageManager', 'devEngines.packageManager', 'devEngines.runtime', 'engines', 'volta'], enabled: false },
         { matchManagers: ['gomod'], matchDepTypes: ['golang', 'toolchain'], enabled: false },
       ],
     },
   };
 }
 
-export async function verifyArtifacts(config, pages) {
+export async function verifyArtifacts(config, pages, pausedHeads = []) {
   for (const pr of await pages('pulls?state=open')) {
     if (!owned(pr, config)) continue;
     if (!Number.isSafeInteger(pr.number) || pr.number < 1) throw new Error('Invalid update identity');
     const sha = pr.head?.sha;
+    if (pausedHeads.some(head => head.number === pr.number && head.sha === sha)) continue;
     if (!/^[a-f0-9]{40}$/.test(sha ?? '')) throw new Error('Invalid update head');
     const files = await pages(`pulls/${pr.number}/files`);
     if (!files.length || files.length >= 3000) throw new Error('Cannot inspect complete update artifacts');
     for (const file of files) {
       if (typeof file.filename !== 'string' || !/(^|\/)(package\.json|pnpm-workspace\.yaml|pnpm-lock\.yaml|package-lock\.json|npm-shrinkwrap\.json|go\.mod|go\.sum|go\.work|go\.work\.sum)$/.test(file.filename) || file.previous_filename) throw new Error('Update PR changes files outside the dependency contract');
       if (/(^|\/)(go\.mod|go\.work)$/.test(file.filename)) {
-        if (!pages.goDirectives || await pages.goDirectives(file.filename, pr.base?.sha) !== await pages.goDirectives(file.filename, sha)) throw new Error('Update PR changes Go or toolchain directives');
+        if (!pages.manifest) throw new Error('Cannot inspect complete Go directives');
+        const directives = body => body.split('\n').map(line => line.trim()).filter(line => /^(?:go|toolchain)\s/.test(line)).join('\n');
+        if (directives(await pages.manifest(file.filename, pr.base?.sha)) !== directives(await pages.manifest(file.filename, sha))) throw new Error('Update PR changes Go or toolchain directives');
+      }
+      if (/(^|\/)package\.json$/.test(file.filename)) {
+        if (!pages.manifest) throw new Error('Cannot inspect package-manager declarations');
+        const declarations = body => {
+          let manifest;
+          try { manifest = JSON.parse(body); } catch { throw new Error('Invalid package-manager declarations'); }
+          return { packageManager: manifest.packageManager, engines: manifest.engines, devEngines: manifest.devEngines, volta: manifest.volta };
+        };
+        if (!isDeepStrictEqual(declarations(await pages.manifest(file.filename, pr.base?.sha)), declarations(await pages.manifest(file.filename, sha)))) throw new Error('Update PR changes package-manager or runtime declarations');
       }
     }
     const statuses = await pages(`commits/${sha}/statuses`);
     const status = statuses.find(value => value.context === 'renovate/artifacts');
-    if (status && status.state !== 'success') throw new Error(`Update artifact generation failed on PR #${pr.number}`);
+    if (!status || status.creator?.login !== config.bot || status.state !== 'success') throw new Error(`Update artifact generation failed on PR #${pr.number}`);
   }
 }

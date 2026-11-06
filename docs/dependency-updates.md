@@ -21,7 +21,8 @@ Never supply a personal operator token as a substitute for a missing installatio
 | Draft PR writes | Contents, Pull requests and Commit statuses write; Issues read |
 
 The engine reads Issues while checking dashboard state and uses Commit statuses for `renovate/artifacts` failures.
-The action cannot grant these permissions or prove the token's entire installation scope; the caller must request and verify downscoping at issuance.
+The action verifies the installation token's one-repository scope and authenticated bot identity before inspecting update work.
+It cannot grant or establish the token's complete permission set; the caller must request and verify permission downscoping at issuance.
 Private npm and Git sources require separate read-only credentials and explicit registry/scope or repository selectors.
 The reader token must differ from the caller token, and a source-reader list cannot include the caller repository.
 No credential is needed for ordinary public npm/Go dependencies beyond the caller's scoped token.
@@ -55,12 +56,13 @@ This trusted engine build does not enable dependency lifecycle scripts.
 Minor/patch updates are grouped separately for npm and Go; majors remain separate.
 Explicit private package/source selectors stay outside unrelated groups.
 The caller's manifest and matching lockfile/checksums belong in the same update PR.
+Package-manager and runtime declarations are excluded from selection and checked again against full base/head manifests; update those tools separately.
 Go import-path migrations and toolchain upgrades remain manual work.
 
 `max-open-prs` defaults to three and accepts 1 through 10.
 At capacity, maintenance mode refreshes eligible existing PRs while blocking new branches and PRs from orphan branches.
 Every open worker PR consumes a slot, including paused ecosystems.
-Incomplete API history, the PR-file API ceiling or a recently autoclosed updater PR stops the run instead of guessing whether creation is safe.
+Incomplete API history, the 250-commit inspection ceiling, the PR-file API ceiling or a recently autoclosed updater PR stops the run instead of guessing whether creation is safe.
 The seven-day autoclosed-PR hold prevents native reuse from bypassing creation counters.
 The worker does not delete that PR or its branch; retain it for explicit disposition or wait until the hold expires.
 Concurrency serializes this caller workflow only; another writer can change PR state after inspection.
@@ -76,13 +78,15 @@ This is not an advisory detector or a replacement for existing vulnerability rep
 
 ## Failure and recovery
 
-The action fails on worker errors, failed/incomplete GitHub inspection or a non-success `renovate/artifacts` status on a current worker PR head.
+The action forces positive artifact-status publication and requires the latest `renovate/artifacts` status to be successful and authored by the configured bot on each eligible update head.
+Missing, foreign or failed publication stops the job, as do worker errors and incomplete GitHub inspection.
+Heads deliberately paused before execution are excluded only while their exact SHA remains unchanged; no new artifact success is claimed for those heads.
 It also rejects changes outside the dependency-file contract and compares complete Go manifests at the base/head SHAs to reject implicit compiler-directive changes.
 It inspects statuses again after writing, and removes its transient work, home, config and cache state on completion, failure or catchable cancellation.
 Subprocesses run in a separate group and are terminated on cancellation or timeout.
 A runner crash or uncatchable kill still requires the runner's normal ephemeral-workspace disposal.
 
-A successful job or an absent artifact status does not prove a coherent lockfile or working application.
+Even a successful job and a positive artifact status do not prove a working application; an absent required status fails the job.
 Consumer CI must validate the resulting PR; a pilot must prove actual registry release selection, private access when used, status publication and repeated live PR behavior.
 Worker stdout/stderr is discarded because upstream diagnostics may contain credentials; the job exposes bounded phase/exit diagnostics and update-head status failures instead.
 Do not enable raw logs in a credentialed job as a debugging shortcut.
