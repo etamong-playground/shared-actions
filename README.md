@@ -147,6 +147,13 @@ The [GitHub token action](https://github.com/actions/create-github-app-token) ow
 Use the independent `gitleaks-secret-check` and `trufflehog-secret-check` actions for full-history baseline and offline provider detection.
 The [caller guide](docs/source-secret-scanning.md) covers immutable action pins, ordinary PR and push events, release dependencies, output limits and optional staged review.
 
+## `dependency-updates` - opt-in draft dependency PRs
+
+Propose npm/pnpm and Go manifest/lockfile updates with a pinned native worker and caller-owned short-lived credentials.
+Dry-run is the default; maintenance continues at the open-PR limit, human edits pause their ecosystem, and the action never merges or enables a schedule.
+Use the [setup and recovery guide](docs/dependency-updates.md) and [manual caller example](examples/dependency-updates/caller.yml) to qualify a caller before writes.
+The caller supplies a trusted runner, matching tool versions, serialized jobs, credential issuance/revocation and downstream CI.
+
 ## Notes
 
 Dependency advisory evidence is available through the [read-only collector](docs/dependency-security.md).
