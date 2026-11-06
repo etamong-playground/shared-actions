@@ -40,6 +40,14 @@ test('caller, write mode and source credentials are explicit', () => {
   validateEvent(writing, event, { ...env, UPDATE_WRITE_ENABLED: 'true' });
 });
 
+test('credentials that would re-match the native redaction marker are rejected', () => {
+  for (const token of ['redacted', 'a', '**', 'x-access-token:redacted']) {
+    assert.throws(() => inputs({ ...env, UPDATE_WRITER_TOKEN: token }), /sanitization/);
+    assert.throws(() => inputs({ ...env, UPDATE_SOURCE_TOKEN: token, UPDATE_SOURCE_REPOSITORIES: '["example/private"]' }), /sanitization/);
+    assert.throws(() => inputs({ ...env, UPDATE_PACKAGE_TOKEN: token, UPDATE_PACKAGE_SCOPE: '@private', UPDATE_REGISTRY_URL: 'https://packages.example/' }), /sanitization/);
+  }
+});
+
 test('registry reader is separately scoped to an HTTPS origin/path', () => {
   const valid = { ...env, UPDATE_PACKAGE_TOKEN: 'package-reader', UPDATE_PACKAGE_SCOPE: '@private', UPDATE_REGISTRY_URL: 'https://packages.example/team/' };
   assert.equal(inputs(valid).registry, 'https://packages.example/team/');
@@ -143,6 +151,7 @@ for (const failure of [false, true]) test(`transient state is removed after engi
       assert.ok(directory.startsWith(root));
       assert.deepEqual(JSON.parse(child.UPDATE_PREFLIGHT).managers, ['npm', 'gomod']);
       await writeFile(join(directory, 'transient'), 'fixture state');
+      await writeFile(child.RENOVATE_REPORT_PATH, JSON.stringify({ repositories: { [env.GITHUB_REPOSITORY]: { status: 'onboarded', branches: [], packageFiles: {} } } }));
       if (failure) throw new Error('Controlled engine failure');
     },
   });

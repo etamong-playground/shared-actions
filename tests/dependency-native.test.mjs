@@ -8,6 +8,7 @@ import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { configuration, inputs } from '../.github/actions/dependency-updates/policy.mjs';
 import { childEnvironment } from '../.github/actions/dependency-updates/run.mjs';
+import { validateTools } from '../.github/actions/dependency-updates/tools.mjs';
 import { runCommand } from '../.github/actions/dependency-updates/process.mjs';
 
 const action = resolve('.github/actions/dependency-updates');
@@ -147,6 +148,11 @@ for version,value in [('v1.0.0',1),('v1.1.0',2)]:
   await writeFile(join(consumer, 'go.mod'), original);
   await writeFile(join(consumer, 'value_test.go'), 'package consumer\nimport ("testing"; dep "example.test/module")\nfunc TestVersion(t *testing.T) { if dep.Value != 2 { t.Fatal(dep.Value) } }\n');
   const env = { ...process.env, GOPROXY: pathToFileURL(proxy).href, GOSUMDB: 'off', GOTOOLCHAIN: 'local', GOFLAGS: '-modcacherw', GOMODCACHE: join(root, 'modules') };
+  const { GlobalConfig } = await native('config/global.js');
+  GlobalConfig.set({ localDir: consumer });
+  const { updateArtifacts } = await native('modules/manager/gomod/artifacts.js');
+  assert.equal(await updateArtifacts({ packageFileName: 'go.mod', updatedDeps: [], newPackageFileContent: original, config: {} }), null, 'Native engine skips missing checksums');
+  await assert.rejects(validateTools(consumer, {}, ['gomod'], async command => command === 'git' ? 'go.mod\0value_test.go\0' : 'go version go1.25.0 linux/amd64'), /committed go.sum/);
   command('go', ['mod', 'tidy'], { cwd: consumer, env });
   const { updateDependency } = await native('modules/manager/gomod/update.js');
   const changed = updateDependency({ fileContent: original, upgrade: { depType: 'require', depName: 'example.test/module', currentValue: 'v1.0.0', newValue: 'v1.1.0', managerData: { lineNumber: 4, multiLine: false } } });

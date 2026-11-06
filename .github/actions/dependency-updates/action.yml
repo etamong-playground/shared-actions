@@ -34,6 +34,10 @@ inputs:
   source-repositories:
     description: JSON array of exact owner/repository selectors for private sources.
     default: '[]'
+outputs:
+  summary:
+    description: Bounded JSON preview of scanned manifests and proposed updates, with sensitive fields omitted.
+    value: ${{ steps.update.outputs.summary }}
 runs:
   using: composite
   steps:
@@ -41,6 +45,7 @@ runs:
       shell: bash
       run: exec node "$GITHUB_ACTION_PATH/prepare.mjs"
     - name: Propose dependency updates
+      id: update
       shell: bash
       env:
         UPDATE_WRITER_TOKEN: ${{ inputs.caller-token }}

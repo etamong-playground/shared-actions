@@ -8,6 +8,7 @@ It creates draft PRs and refreshes eligible existing PRs; it never merges them o
 Use a trusted Linux or macOS runner with Node.js 24.11 or later in the 24.x line, npm, Python 3, make, a C++ compiler and Git 2.33 or later.
 Install the caller's declared package-manager and Go versions before invoking the action.
 Each npm/pnpm project needs an exact `packageManager` pin, inherited from a workspace parent when appropriate; a run accepts one installed version per package manager.
+Managed npm/pnpm projects need a nonempty committed lockfile, and Go modules with versioned dependencies, including replacements, need a nonempty committed `go.sum`; missing artifacts are rejected before the native engine can skip regeneration.
 The action rejects mismatched versions and unexcluded Yarn/Bun projects instead of letting the engine silently ignore global-tool constraints.
 The worker uses installed binaries and keeps Go/toolchain directive updates disabled.
 
@@ -33,6 +34,7 @@ No credential is needed for ordinary public npm/Go dependencies beyond the calle
 2. Adapt the [caller example](../examples/dependency-updates/caller.yml) to existing credentials and installed tool versions, replacing `REVIEWED_SHARED_ACTION_SHA` with a reviewed immutable shared-actions commit.
    The example assumes an already authorized caller-owned App credential configuration; retain an established broker instead of distributing new keys merely to copy it.
 3. Dispatch on the default branch with `write=false`.
+   Inspect the bounded JSON preview in the job summary or the action's `summary` output: it identifies proposed dependency/version changes and scanned manifest counts, including an explicit empty result.
    Feature branches, pull-request events and mismatched caller identities are rejected.
 4. After approving the caller and its credentials, dispatch with `write=true` and inspect the resulting draft PR, regenerated artifacts and required consumer CI.
    Prove artifact-error status publication on that exact update head with a controlled failure before relying on the integration.
@@ -88,7 +90,9 @@ A runner crash or uncatchable kill still requires the runner's normal ephemeral-
 
 Even a successful job and a positive artifact status do not prove a working application; an absent required status fails the job.
 Consumer CI must validate the resulting PR; a pilot must prove actual registry release selection, private access when used, status publication and repeated live PR behavior.
-Worker stdout/stderr is discarded because upstream diagnostics may contain credentials; the job exposes bounded phase/exit diagnostics and update-head status failures instead.
+Worker stdout/stderr is discarded because upstream diagnostics may contain credentials; the engine's sanitized structured report is read only from its private transient directory, projected to bounded allowlisted fields and removed after publication.
+The preview omits raw diagnostics, URLs, unsafe identifiers and known credential encodings, caps visible updates at 50 and reports the omitted count.
+The job exposes bounded phase/exit diagnostics and update-head status failures instead.
 Do not enable raw logs in a credentialed job as a debugging shortcut.
 
 To stop future execution, disable the caller workflow or unset its write opt-in.

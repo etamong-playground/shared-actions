@@ -21,6 +21,8 @@ export function inputs(env) {
   if (!token || /\s/.test(token)) throw new Error('Missing or invalid caller token');
   const sourceToken = env.UPDATE_SOURCE_TOKEN || '';
   const packageToken = env.UPDATE_PACKAGE_TOKEN || '';
+  const credentialForms = [token, sourceToken, packageToken].filter(Boolean).flatMap(value => [value, value.startsWith('x-access-token:') ? value.slice('x-access-token:'.length) : value]).flatMap(value => [value, encodeURIComponent(value), Buffer.from(value).toString('base64')]);
+  if (credentialForms.some(value => value && '**redacted**'.includes(value))) throw new Error('Credential value is incompatible with worker sanitization');
   if ([sourceToken, packageToken].some(value => value && (value === token || /\s/.test(value)))) throw new Error('Dependency readers must be separate from the caller token');
   let sources;
   try { sources = JSON.parse(env.UPDATE_SOURCE_REPOSITORIES || '[]'); } catch { throw new Error('Invalid source repository list'); }
@@ -63,7 +65,7 @@ export async function verifyCaller(config, request = fetch, signal) {
   const read = async (url, extra = {}) => {
     try {
       const response = await request(url, {
-        headers: { Authorization: `Bearer ${config.token}`, Accept: 'application/vnd.github+json' },
+        headers: { Authorization: `Bearer ${config.token}`, Accept: 'application/vnd.github+json', 'Content-Type': 'application/json' },
         redirect: 'error', signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(30000)]) : AbortSignal.timeout(30000), ...extra,
       });
       if (!response.ok) throw new Error();
@@ -82,7 +84,7 @@ export function github(config, request = fetch, signal) {
     for (let page = 1; page <= 31; page++) {
       let response;
       try { response = await request(`https://api.github.com/repos/${config.repository}/${path}${path.includes('?') ? '&' : '?'}per_page=100&page=${page}`, {
-        headers: { Authorization: `Bearer ${config.token}`, Accept: 'application/vnd.github+json' },
+        headers: { Authorization: `Bearer ${config.token}`, Accept: 'application/vnd.github+json', 'Content-Type': 'application/json' },
         redirect: 'error', signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(30000)]) : AbortSignal.timeout(30000),
       }); } catch { throw new Error('GitHub inspection interrupted or unavailable'); }
       if (!response.ok) throw new Error(`GitHub inspection failed (HTTP ${response.status})`);
@@ -100,7 +102,7 @@ export function github(config, request = fetch, signal) {
     try {
       const path = filename.split('/').map(encodeURIComponent).join('/');
       const response = await request(`https://api.github.com/repos/${config.repository}/contents/${path}?ref=${sha}`, {
-        headers: { Authorization: `Bearer ${config.token}`, Accept: 'application/vnd.github+json' },
+        headers: { Authorization: `Bearer ${config.token}`, Accept: 'application/vnd.github+json', 'Content-Type': 'application/json' },
         redirect: 'error', signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(30000)]) : AbortSignal.timeout(30000),
       });
       if (!response.ok) throw new Error();

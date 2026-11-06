@@ -24,7 +24,8 @@ test('workspace inheritance uses the declared exact package-manager version', as
   await mkdir(join(root, 'web'));
   await writeFile(join(root, 'package.json'), JSON.stringify({ packageManager: 'pnpm@10.28.0' }));
   await writeFile(join(root, 'web/package.json'), JSON.stringify({ dependencies: { example: '1.0.0' } }));
-  const files = ['package.json', 'web/package.json'];
+  await writeFile(join(root, 'pnpm-lock.yaml'), 'lockfileVersion: 9.0\n');
+  const files = ['package.json', 'web/package.json', 'pnpm-lock.yaml'];
   await validateTools(root, {}, ['npm'], inspect(files, { pnpm: '10.28.0\n' }));
   await assert.rejects(validateTools(root, {}, ['npm'], inspect(files, { pnpm: '11.0.0\n' })), /does not match/);
 });
@@ -36,7 +37,9 @@ test('unsupported or undeclared managers and inconsistent workspace pins fail cl
   await assert.rejects(validateTools(root, {}, ['npm'], inspect(['package.json'], {})), /exact npm or pnpm/);
   await writeFile(join(root, 'package.json'), JSON.stringify({ packageManager: 'npm@11.17.0' }));
   await writeFile(join(root, 'web/package.json'), JSON.stringify({ packageManager: 'npm@10.0.0' }));
-  await assert.rejects(validateTools(root, {}, ['npm'], inspect(['package.json', 'web/package.json'], {})), /one installed version/);
+  await writeFile(join(root, 'package-lock.json'), '{}');
+  await writeFile(join(root, 'web/package-lock.json'), '{}');
+  await assert.rejects(validateTools(root, {}, ['npm'], inspect(['package.json', 'web/package.json', 'package-lock.json', 'web/package-lock.json'], {})), /one installed version/);
   await assert.rejects(validateTools(root, {}, ['npm'], inspect(['web/yarn.lock'], {})), /Only npm/);
   await validateTools(root, { ignorePaths: ['web/**'] }, ['npm'], inspect(['web/yarn.lock'], {}));
 });
@@ -62,4 +65,17 @@ test('failed bootstrap removes its private state without exposing ambient creden
   assert.ok(!result.stderr.includes('synthetic-operator-secret'));
   assert.deepEqual(JSON.parse(await readFile(record, 'utf8')), { registry: 'https://registry.npmjs.org/' });
   assert.ok(!(await readdir(root)).some(name => name.startsWith('dependency-engine-')));
+});
+
+
+test('managed modules cannot silently skip missing lockfiles or Go checksums', async t => {
+  const root = await fixture(t);
+  await writeFile(join(root, 'package.json'), JSON.stringify({ packageManager: 'npm@11.17.0', dependencies: { example: '1.0.0' } }));
+  await assert.rejects(validateTools(root, {}, ['npm'], inspect(['package.json'], {})), /committed lockfile/);
+  await writeFile(join(root, 'go.mod'), 'module example.test/consumer\n\ngo 1.25.0\nrequire example.test/module v1.0.0\n');
+  await assert.rejects(validateTools(root, {}, ['gomod'], inspect(['go.mod'], { go: 'go version go1.25.0 linux/amd64' })), /committed go.sum/);
+  await writeFile(join(root, 'go.mod'), 'module example.test/consumer\n\ngo 1.25.0\nreplace example.test/old => example.test/new v1.0.0\n');
+  await assert.rejects(validateTools(root, {}, ['gomod'], inspect(['go.mod'], { go: 'go version go1.25.0 linux/amd64' })), /committed go.sum/);
+  await writeFile(join(root, 'go.sum'), '');
+  await assert.rejects(validateTools(root, {}, ['gomod'], inspect(['go.mod', 'go.sum'], { go: 'go version go1.25.0 linux/amd64' })), /committed go.sum/);
 });
