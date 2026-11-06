@@ -1,0 +1,54 @@
+name: Dependency updates
+on:
+  workflow_dispatch:
+    inputs:
+      write:
+        description: Create or refresh draft update PRs after a successful dry-run.
+        type: boolean
+        default: false
+permissions:
+  contents: read
+concurrency:
+  group: dependency-updates-${{ github.repository }}
+  cancel-in-progress: false
+jobs:
+  update:
+    if: github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '24.19.0'
+      - uses: pnpm/action-setup@f40ffcd9367d9f12939873eb1018b921a783ffaa
+        with:
+          run_install: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff
+        with:
+          go-version-file: go.mod
+          cache: false
+      - name: Resolve the caller repository name
+        id: caller
+        shell: bash
+        run: printf 'repository=%s\n' "${GITHUB_REPOSITORY#*/}" >> "$GITHUB_OUTPUT"
+      - uses: actions/create-github-app-token@fee1f7d63c2ff003460e3d139729b119787bc349
+        id: writer
+        with:
+          app-id: ${{ secrets.UPDATER_APP_ID }}
+          private-key: ${{ secrets.UPDATER_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: ${{ steps.caller.outputs.repository }}
+          permission-contents: ${{ inputs.write && 'write' || 'read' }}
+          permission-pull-requests: ${{ inputs.write && 'write' || 'read' }}
+          permission-statuses: ${{ inputs.write && 'write' || 'read' }}
+          permission-issues: read
+          skip-token-revoke: false
+      - uses: etamong-playground/shared-actions/.github/actions/dependency-updates@ee6afb7a23f7dc09030956659808050674019ee6
+        with:
+          caller-token: ${{ steps.writer.outputs.token }}
+          bot-login: ${{ format('{0}[bot]', steps.writer.outputs.app-slug) }}
+          dry-run: ${{ !inputs.write }}
+          write-enabled: ${{ inputs.write }}
