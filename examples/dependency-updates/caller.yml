@@ -46,7 +46,7 @@ jobs:
           permission-statuses: ${{ inputs.write && 'write' || 'read' }}
           permission-issues: read
           skip-token-revoke: false
-      - uses: etamong-playground/shared-actions/.github/actions/dependency-updates@REVIEWED_SHARED_ACTION_SHA
+      - uses: etamong-playground/shared-actions/.github/actions/dependency-updates@ee6afb7a23f7dc09030956659808050674019ee6
         with:
           caller-token: ${{ steps.writer.outputs.token }}
           bot-login: ${{ format('{0}[bot]', steps.writer.outputs.app-slug) }}
