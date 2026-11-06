@@ -61,6 +61,7 @@ test('pinned worker maintains an existing PR at capacity, refuses new branches a
   const { processBranch } = await native('workers/repository/update/branch/index.js');
   const pr = { number: 1, title: 'deps: update fixture', body: 'Update fixture dependency.', state: 'open', sourceBranch: branch, targetBranch: 'main', labels: [], canRebase: true, isDraft: true, bodyStruct: {} };
   let updates = 0;
+  const artifactStates = new Map();
   const fake = new Proxy({
     labelCharLimit: () => 50,
     getBranchPr: async name => name === branch ? pr : null,
@@ -69,14 +70,14 @@ test('pinned worker maintains an existing PR at capacity, refuses new branches a
     getPr: async () => pr,
     refreshPr: async () => pr,
     getBranchStatus: async () => 'success',
-    getBranchStatusCheck: async () => null,
+    getBranchStatusCheck: async name => artifactStates.get(git(remote, 'rev-parse', name)) ?? null,
     getIssueComments: async () => [],
     ensureComment: async () => false,
     ensureCommentRemoval: async () => false,
     getPrFiles: async () => ['package.json'],
     updatePr: async () => { updates++; return pr; },
     createPr: async () => assert.fail('No new PR may be created at capacity'),
-    setBranchStatus: async () => {},
+    setBranchStatus: async ({ branchName, state }) => { artifactStates.set(git(remote, 'rev-parse', branchName), state); },
     getVulnerabilityAlerts: async () => [],
     massageMarkdown: value => value,
     supportsPlatformAutomerge: false,
@@ -97,6 +98,7 @@ test('pinned worker maintains an existing PR at capacity, refuses new branches a
   assert.equal(JSON.parse(git(remote, 'show', `${branch}:package.json`)).dependencies['fixture-dep'], '1.2.0');
   assert.equal(git(remote, 'show', `${branch}:latest.txt`), 'new base change');
   const head = git(remote, 'rev-parse', branch);
+  assert.equal(artifactStates.get(head), 'green');
   await processBranch(config);
   assert.equal(git(remote, 'rev-parse', branch), head, 'Repeated maintenance does not add another commit');
   const denied = await processBranch({ ...config, branchName: 'dependency-updates/new-fixture' });
