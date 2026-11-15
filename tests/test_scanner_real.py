@@ -1,5 +1,6 @@
 from contextlib import redirect_stdout
 import io
+import json
 import os
 from pathlib import Path
 import random
@@ -69,6 +70,103 @@ class RealScannerTests(unittest.TestCase):
         for tool in ['gitleaks', 'trufflehog']:
             with self.subTest(tool=tool):
                 self.assertEqual(self.check(tool)[0], 1)
+
+    def fixture_policy(self):
+        (self.repository / 'approved').write_text(self.candidate + '\n')
+        self.commit()
+        blob = self.git('rev-parse', 'HEAD:approved')
+        entries = [dict(repository='example/project', scanner=tool, detector=detector,
+                        path='approved', blob_oid=blob, owner='Fixture maintainer', reason='Synthetic qualification',
+                        expires_at='2099-01-01T00:00:00Z', removal_condition='Remove fixture')
+                   for tool, detector in [('gitleaks', 'github-pat'), ('trufflehog', 'Github')]]
+        policy = self.repository / '.github/source-secret-exceptions.json'
+        policy.parent.mkdir()
+        policy.write_text(json.dumps({'version': 1, 'exceptions': entries}))
+        return self.commit(), entries
+
+    def dispatch_policy_check(self, tool):
+        head = self.git('rev-parse', 'HEAD')
+        event = {'repository': {'full_name': 'example/project', 'default_branch': 'main'},
+                 'ref': 'refs/heads/main'}
+        identity = {'repository': 'example/project', 'sha': head, 'ref': event['ref']}
+        return self.check(tool, event_name='workflow_dispatch', event=event, identity=identity)
+
+    def test_exact_reviewed_fixture_is_clean_but_copied_path_blocks(self):
+        self.fixture_policy()
+        for tool in ['gitleaks', 'trufflehog']:
+            self.assertEqual(self.dispatch_policy_check(tool), (0, 'Source scan clean.\n'))
+        (self.repository / 'copy').write_text(self.candidate + '\n')
+        self.commit()
+        for tool in ['gitleaks', 'trufflehog']:
+            self.assertEqual(self.dispatch_policy_check(tool)[0], 2)
+
+    def test_changed_fixture_endpoint_blocks_even_without_new_diff_finding(self):
+        self.fixture_policy()
+        (self.repository / 'approved').write_text(self.candidate + '\nchanged fixture blob\n')
+        self.commit()
+        for tool in ['gitleaks', 'trufflehog']:
+            with self.subTest(tool=tool):
+                self.assertEqual(self.dispatch_policy_check(tool)[0], 2)
+
+    def test_changed_candidate_line_cannot_reuse_the_fixture_exception(self):
+        self.fixture_policy()
+        replacement = self.candidate[:-1] + ('A' if self.candidate[-1] != 'A' else 'B')
+        (self.repository / 'approved').write_text(replacement + '\n')
+        self.commit()
+        for tool in ['gitleaks', 'trufflehog']:
+            self.assertEqual(self.dispatch_policy_check(tool)[0], 2)
+
+    def test_unapproved_intermediate_blob_is_not_hidden_by_restoration(self):
+        self.fixture_policy()
+        (self.repository / 'approved').write_text(self.candidate + '\nintermediate modification\n')
+        self.commit()
+        (self.repository / 'approved').write_text(self.candidate + '\n')
+        self.commit()
+        for tool in ['gitleaks', 'trufflehog']:
+            self.assertEqual(self.dispatch_policy_check(tool)[0], 2)
+
+    def test_approved_blob_renamed_to_another_path_is_incomplete(self):
+        self.fixture_policy()
+        self.git('mv', 'approved', 'renamed')
+        self.commit()
+        for tool in ['gitleaks', 'trufflehog']:
+            self.assertEqual(self.dispatch_policy_check(tool)[0], 2)
+
+    def test_deleted_approved_fixture_keeps_exact_historical_provenance(self):
+        self.fixture_policy()
+        (self.repository / 'approved').unlink()
+        self.commit()
+        for tool in ['gitleaks', 'trufflehog']:
+            self.assertEqual(self.dispatch_policy_check(tool)[0], 0)
+
+    def test_local_and_staged_scans_do_not_activate_committed_policy(self):
+        self.fixture_policy()
+        for tool in ['gitleaks', 'trufflehog']:
+            self.assertEqual(self.check(tool)[0], 1)
+            self.assertEqual(self.check(tool, staged=True)[0], 1)
+
+    def test_other_candidate_is_not_filtered_with_approved_fixture(self):
+        self.fixture_policy()
+        replacement = self.candidate[:-1] + ('A' if self.candidate[-1] != 'A' else 'B')
+        (self.repository / 'other').write_text(replacement + '\n')
+        self.commit()
+        for tool in ['gitleaks', 'trufflehog']:
+            self.assertEqual(self.dispatch_policy_check(tool)[0], 1)
+
+    def test_proposed_policy_does_not_replace_trusted_pr_base(self):
+        base, entries = self.fixture_policy()
+        for entry in entries:
+            entry['blob_oid'] = 'a' * 40
+        (self.repository / '.github/source-secret-exceptions.json').write_text(
+            json.dumps({'version': 1, 'exceptions': entries}))
+        head = self.commit()
+        event = {'repository': {'full_name': 'example/project', 'default_branch': 'main'},
+                 'pull_request': {'base': {'sha': base, 'ref': 'main',
+                                           'repo': {'full_name': 'example/project'}}}}
+        identity = {'repository': 'example/project', 'sha': head, 'ref': 'refs/pull/1/merge'}
+        for tool in ['gitleaks', 'trufflehog']:
+            self.assertEqual(self.check(tool, event_name='pull_request', event=event, identity=identity)[0], 0)
+            self.assertEqual(self.dispatch_policy_check(tool)[0], 2)
 
     def test_repository_and_inline_suppression_cannot_hide_candidates(self):
         (self.repository / 'text').write_text(self.candidate + ' # gitleaks:allow trufflehog:ignore\n')

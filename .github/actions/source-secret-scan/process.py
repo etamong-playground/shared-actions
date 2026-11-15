@@ -84,12 +84,25 @@ def run(command, *, cwd, env, timeout=180, output_bytes=2 * 1024 * 1024):
     finally:
         cleanup_mask = signal.pthread_sigmask(signal.SIG_BLOCK, blocked)
         try:
+            cleanup_failed = False
             try:
                 os.killpg(process.pid, signal.SIGKILL)
             except ProcessLookupError:
                 pass
-            process.wait()
-            process.stdout.close()
-            process.stderr.close()
+            except OSError:
+                cleanup_failed = True
+                try:
+                    process.kill()
+                except OSError:
+                    pass
+            try:
+                process.wait(timeout=5)
+            except subprocess.SubprocessError:
+                cleanup_failed = True
+            finally:
+                process.stdout.close()
+                process.stderr.close()
+            if cleanup_failed:
+                raise IncompleteScan()
         finally:
             signal.pthread_sigmask(signal.SIG_SETMASK, cleanup_mask)
