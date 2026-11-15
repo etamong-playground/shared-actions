@@ -14,7 +14,8 @@ The runner needs access to GitHub's release assets for installation; scan invoca
 Do not pass application, dependency-registry, publishing or production secrets into either job.
 Runner isolation and repository protection remain the caller's responsibility.
 
-Replace `REVIEWED_COMMIT_SHA` below with the reviewed immutable commit containing both actions.
+The example pins the action implementation at `b3b0eddfd1f08aea75b7368d58e5c0632509af06`.
+Review and qualify an updated immutable action commit before changing that reference.
 Do not substitute a moving branch or tag.
 
 ```yaml
@@ -33,7 +34,7 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
-      - uses: etamong-playground/shared-actions/.github/actions/gitleaks-secret-check@REVIEWED_COMMIT_SHA
+      - uses: etamong-playground/shared-actions/.github/actions/gitleaks-secret-check@b3b0eddfd1f08aea75b7368d58e5c0632509af06
   secret-check-trufflehog:
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -42,7 +43,7 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
-      - uses: etamong-playground/shared-actions/.github/actions/trufflehog-secret-check@REVIEWED_COMMIT_SHA
+      - uses: etamong-playground/shared-actions/.github/actions/trufflehog-secret-check@b3b0eddfd1f08aea75b7368d58e5c0632509af06
 ```
 
 Require both observed check names with their GitHub Actions producer identity in repository controls.
