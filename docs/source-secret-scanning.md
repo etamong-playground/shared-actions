@@ -98,7 +98,10 @@ Disposable mirrors, configuration and staged snapshots are removed on completion
 No hook is installed.
 Use a staged review when credential handling, injection, authentication, CI, deployment or release code changes, and before publishing source when CI evidence is unavailable.
 The snapshot contains index blobs only, excludes unrelated untracked and working-tree changes, rejects links, submodules and unmerged index entries, and does not expand archives or scan binary blobs containing NUL bytes.
-Passing this supplement does not establish that Git history is clean.
+This is the entire bounded index snapshot, including unchanged tracked entries, rather than only paths in the staged diff.
+An unchanged indexed symlink or submodule therefore makes this optional mode incomplete; preserve the repository structure and use a full-history scan instead of deleting the entry to obtain a clean result.
+Omit `--staged` from either local command below to scan full reachable history.
+Passing the staged supplement does not establish that Git history is clean.
 
 ```sh
 mkdir -p .tmp/scanner-tools
