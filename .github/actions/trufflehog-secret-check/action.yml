@@ -1,0 +1,10 @@
+name: TruffleHog offline source secret check
+description: Check observed Git scope with pinned offline detectors and bounded sanitized output
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      run: |
+        set -euo pipefail
+        python3 "$GITHUB_ACTION_PATH/../source-secret-scan/install.py" trufflehog "$RUNNER_TEMP/source-secret-tools"
+        python3 "$GITHUB_ACTION_PATH/../source-secret-scan/scan.py" trufflehog --binary "$RUNNER_TEMP/source-secret-tools/trufflehog" --repository "$GITHUB_WORKSPACE"

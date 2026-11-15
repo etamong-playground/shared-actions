@@ -1,0 +1,29 @@
+name: Scanner qualification
+on:
+  pull_request:
+  push:
+    branches: [main]
+permissions:
+  contents: read
+jobs:
+  scanner-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install qualified scanner archives
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 .github/actions/source-secret-scan/install.py gitleaks "$RUNNER_TEMP/scanner-fixtures"
+          python3 .github/actions/source-secret-scan/install.py trufflehog "$RUNNER_TEMP/scanner-fixtures"
+      - name: Exercise actual offline scanners against synthetic histories
+        env:
+          SCANNER_TEST_BIN_DIR: ${{ runner.temp }}/scanner-fixtures
+        run: python3 -m unittest discover -s tests -p 'test_scanner*.py'
