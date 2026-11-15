@@ -25,6 +25,22 @@ class ScannerProcessTests(unittest.TestCase):
         self.assertEqual(output, b'fixture output\n')
         self.assertEqual(error, b'fixture error\n')
 
+    def test_cleanup_permission_failure_is_incomplete_and_reaps_leader(self):
+        original = subprocess.Popen
+        children = []
+        def start(*args, **kwargs):
+            child = original(*args, **kwargs)
+            children.append(child)
+            return child
+        with patch.object(PROCESS.subprocess, 'Popen', side_effect=start), \
+             patch.object(PROCESS.os, 'killpg', side_effect=PermissionError):
+            with self.assertRaises(PROCESS.IncompleteScan):
+                self.execute('print("controlled output")')
+        self.assertEqual(len(children), 1)
+        self.assertIsNotNone(children[0].returncode)
+        self.assertTrue(children[0].stdout.closed)
+        self.assertTrue(children[0].stderr.closed)
+
     def test_combined_output_budget_applies_to_both_streams(self):
         with self.assertRaises(PROCESS.IncompleteScan):
             self.execute('import os; os.write(1,b"a"*8); os.write(2,b"b"*8)', output_bytes=10)

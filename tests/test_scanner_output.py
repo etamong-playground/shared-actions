@@ -78,6 +78,20 @@ class ScannerOutputTests(unittest.TestCase):
             with self.subTest(code=code, raw=raw), self.assertRaises(IncompleteScan):
                 scan.gitleaks_count(raw, code)
 
+    def test_exception_filter_cannot_hide_invalid_or_oversized_raw_results(self):
+        class AllowAll:
+            def allows(self, *args):
+                return True
+        item = truffle_record()
+        item['Verified'] = True
+        with self.assertRaises(IncompleteScan):
+            scan.trufflehog_count(json.dumps(item).encode(), 0, policy=AllowAll())
+        raw = (json.dumps(truffle_record()).encode() + b'\n') * 1001
+        with self.assertRaises(IncompleteScan):
+            scan.trufflehog_count(raw, 0, policy=AllowAll())
+        with self.assertRaises(IncompleteScan):
+            scan.gitleaks_count(b'[]', 1, policy=AllowAll())
+
     def test_wrong_version_and_raw_diagnostics_never_leave_wrapper(self):
         for responses in [[(0, b'wrong version', b'')],
                           [(0, b'trufflehog 3.99.7', b''), (0, b'synthetic candidate', b'synthetic diagnostic')]]:

@@ -8,6 +8,7 @@ import sys
 import tempfile
 
 import git_scope
+import exception_policy
 from install import TOOLS
 from process import IncompleteScan, budget, interruption, run
 
@@ -43,7 +44,7 @@ def strict_json(raw):
     return json.loads(raw, parse_constant=invalid_constant, object_pairs_hook=unique_object)
 
 
-def gitleaks_count(raw, code):
+def gitleaks_count(raw, code, policy=None):
     items = strict_json(raw)
     if not isinstance(items, list) or code not in (0, 1) or len(items) > 1000:
         raise IncompleteScan()
@@ -58,14 +59,17 @@ def gitleaks_count(raw, code):
             raise IncompleteScan()
     if bool(items) != bool(code):
         raise IncompleteScan()
-    return len(items)
+    return sum(not (policy and policy.allows('gitleaks', item['RuleID'], item['File'], item['Commit']))
+               for item in items)
 
 
-def trufflehog_count(raw, code, staged=False):
+def trufflehog_count(raw, code, staged=False, policy=None):
     if code != 0:
         raise IncompleteScan()
     count = 0
-    for line in raw.splitlines():
+    for index, line in enumerate(raw.splitlines()):
+        if index >= 1000:
+            raise IncompleteScan()
         if len(line) > 256 * 1024:
             raise IncompleteScan()
         item = strict_json(line)
@@ -93,7 +97,8 @@ def trufflehog_count(raw, code, staged=False):
             raise IncompleteScan()
         if not staged and not git_scope.COMMIT.fullmatch(location['commit']):
             raise IncompleteScan()
-        count += 1
+        count += not (policy and not staged and policy.allows(
+            'trufflehog', item['DetectorName'], location['file'], location['commit']))
         if count > 1000:
             raise IncompleteScan()
     return count
@@ -130,7 +135,7 @@ def staged_files(repository, destination, env):
             (destination / f'{index:08d}.txt').write_bytes(contents)
 
 
-def check(tool, binary, repository, scratch_root, *, staged=False, event_name=None, event=None):
+def check(tool, binary, repository, scratch_root, *, staged=False, event_name=None, event=None, identity=None):
     try:
         scratch_root.mkdir(parents=True, exist_ok=True)
         with interruption(), budget(240), tempfile.TemporaryDirectory(prefix='source-scan-', dir=scratch_root) as directory:
@@ -142,12 +147,14 @@ def check(tool, binary, repository, scratch_root, *, staged=False, event_name=No
             expected = TOOLS[tool]['version'] if tool == 'gitleaks' else 'trufflehog ' + TOOLS[tool]['version']
             if code or diagnostics or version.decode().strip().removeprefix('v') != expected:
                 raise IncompleteScan()
+            policy = None
             if staged:
                 source = scratch / 'staged'
                 staged_files(repository, source, env)
                 head, base = None, None
             else:
                 source, head = git_scope.prepare(repository, scratch, env)
+                policy = exception_policy.load(source, env, head, event_name, event, identity, strict_json)
                 base = (git_scope.range_base(source, env, head, event_name, event)
                         if tool == 'trufflehog' and event_name is not None else None)
             if tool == 'gitleaks':
@@ -172,7 +179,10 @@ def check(tool, binary, repository, scratch_root, *, staged=False, event_name=No
             code, output, diagnostics = run(command, cwd=scratch, env=env)
             if diagnostics:
                 raise IncompleteScan()
-            count = gitleaks_count(output, code) if tool == 'gitleaks' else trufflehog_count(output, code, staged)
+            count = (gitleaks_count(output, code, policy) if tool == 'gitleaks'
+                     else trufflehog_count(output, code, staged, policy))
+            if policy:
+                policy.require_active()
     except (IncompleteScan, OSError, ValueError, TypeError, KeyError, RecursionError):
         print('Source scan incomplete.')
         return 2
@@ -191,7 +201,7 @@ def main(argv=None):
     parser.add_argument('--staged', action='store_true')
     args = parser.parse_args(argv)
     try:
-        event_name, event = None, None
+        event_name, event, identity = None, None, None
         if os.environ.get('GITHUB_ACTIONS') == 'true':
             if args.staged:
                 raise IncompleteScan()
@@ -203,9 +213,11 @@ def main(argv=None):
             if len(raw) > 2 * 1024 * 1024:
                 raise IncompleteScan()
             event = strict_json(raw)
+            identity = {'repository': os.environ['GITHUB_REPOSITORY'],
+                        'sha': os.environ['GITHUB_SHA'], 'ref': os.environ['GITHUB_REF']}
         root = Path(os.environ.get('RUNNER_TEMP', '.tmp')) / 'source-scans'
         return check(args.tool, args.binary.resolve(), args.repository.resolve(), root,
-                     staged=args.staged, event_name=event_name, event=event)
+                     staged=args.staged, event_name=event_name, event=event, identity=identity)
     except (IncompleteScan, OSError, ValueError, TypeError, KeyError, RecursionError):
         print('Source scan incomplete.')
         return 2

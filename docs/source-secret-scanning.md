@@ -93,6 +93,54 @@ Choose an appropriate runner job timeout and resource isolation, and measure the
 The process wrapper terminates its process group on output exhaustion, deadline or catchable interruption.
 Disposable mirrors, configuration and staged snapshots are removed on completion or catchable interruption; no raw scanner report is written to disk.
 
+## Exact reviewed synthetic fixtures
+
+A consumer may keep reviewed synthetic-fixture records at the fixed private path `.github/source-secret-exceptions.json`.
+The generic action contains no consumer-specific records and accepts no input selecting an alternate policy or exclusion.
+Prerequisites are an approved decision, independently protected policy/workflow paths and a separately reviewed bootstrap change before scanner activation.
+Real or possibly live credentials never qualify.
+
+Each entry binds the event repository, scanner, detector, exact regular-file path and immutable Git blob object ID, with an owner, reason, UTC expiry and removal condition.
+The following is an illustrative record, not an operational exception; obtain the real fixture blob ID from the reviewed commit and select a bounded expiry through that review.
+
+```json
+{
+  "version": 1,
+  "exceptions": [{
+    "repository": "example/project",
+    "scanner": "gitleaks",
+    "detector": "private-key",
+    "path": "fixtures/synthetic.pem",
+    "blob_oid": "0000000000000000000000000000000000000000",
+    "owner": "Fixture maintainer",
+    "reason": "Controlled synthetic signer",
+    "expires_at": "2030-01-02T00:00:00Z",
+    "removal_condition": "Remove after separately authorized cleanup retires the historical fixture"
+  }]
+}
+```
+
+Detector identities are case-sensitive and scanner-specific; another scanner needs its own reviewed entry.
+Policy JSON is limited to 64 KiB and 32 entries, with exact fields, unique identities and bounded nonempty string values.
+Malformed, expired, duplicate or unresolved policy fails incomplete, including expiry reached during scanning.
+Expiry uses execution time and never renews automatically.
+No candidate-derived fingerprint is stored or used.
+
+On default-branch PRs, policy comes from the observed base commit, independently of the scan merge base; proposed or working-tree policy cannot authorize itself.
+Default-branch push and dispatch events bind policy to their observed protected execution revision and repository identity.
+Other target branches, non-default dispatch refs and local scans apply no exceptions.
+Missing or contradictory event identity fails incomplete.
+The workflow selecting this action and fixed policy path must retain independent review protection.
+
+Original scanner schemas, exit status, diagnostics and budgets are validated before any filtering.
+Each discounted finding resolves its exact commit/path to the approved regular blob without searching ancestors.
+Every reachable historical tree, including the scanned endpoint, must keep approved fixture paths absent or bound to approved blobs for each scanner/detector identity.
+An approved blob at an unapproved path, or any other historical blob at its approved path, fails incomplete even if candidate lines did not change.
+Policy qualification is bounded to 1,024 reachable revisions and 1 MiB of tree metadata per revision within the existing aggregate deadline; exceeding those limits stays incomplete.
+A copied path, another detector or changed blob remains blocking.
+An absent current path can retain the historical exception until separately authorized cleanup makes its old blob unreachable.
+The wrapper retains its clean/count/incomplete output boundary without exposing finding locations or policy contents.
+
 ## Optional local staged review
 
 No hook is installed.
