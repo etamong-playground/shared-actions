@@ -142,6 +142,11 @@ RUN --mount=type=secret,id=github,target=/root/.netrc,required=true go mod downl
 The [Vault action](https://github.com/hashicorp/vault-action) owns Kubernetes authentication and secret masking.
 The [GitHub token action](https://github.com/actions/create-github-app-token) owns installation-token creation and revocation.
 
+## Source secret checks
+
+Use the independent `gitleaks-secret-check` and `trufflehog-secret-check` actions for full-history baseline and offline provider detection.
+The [caller guide](docs/source-secret-scanning.md) covers immutable action pins, ordinary PR and push events, release dependencies, output limits and optional staged review.
+
 ## Notes
 
 - **Self-hosted runner**: set the `runner` input when your registry / secret manager /

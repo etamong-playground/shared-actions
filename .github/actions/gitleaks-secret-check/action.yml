@@ -1,0 +1,10 @@
+name: Gitleaks source secret check
+description: Check full reachable Git history with a pinned scanner and bounded redacted output
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      run: |
+        set -euo pipefail
+        python3 "$GITHUB_ACTION_PATH/../source-secret-scan/install.py" gitleaks "$RUNNER_TEMP/source-secret-tools"
+        python3 "$GITHUB_ACTION_PATH/../source-secret-scan/scan.py" gitleaks --binary "$RUNNER_TEMP/source-secret-tools/gitleaks" --repository "$GITHUB_WORKSPACE"
