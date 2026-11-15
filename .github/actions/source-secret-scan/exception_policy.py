@@ -81,7 +81,7 @@ class Policy:
                 if not git_scope.COMMIT.fullmatch(revision):
                     raise IncompleteScan()
                 code, raw, diagnostics = run(
-                    ['git', '-C', str(repository), 'ls-tree', '-rz', '--full-tree', revision],
+                    ['git', '-C', str(repository), 'ls-tree', '-rzt', '--full-tree', revision],
                     cwd=repository, env=env, timeout=30, output_bytes=1024 * 1024)
                 if code or diagnostics:
                     raise IncompleteScan()

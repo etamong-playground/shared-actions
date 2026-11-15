@@ -125,6 +125,22 @@ class RealScannerTests(unittest.TestCase):
         for tool in ['gitleaks', 'trufflehog']:
             self.assertEqual(self.dispatch_policy_check(tool)[0], 2)
 
+    def test_fixture_directory_replacement_and_restoration_are_incomplete(self):
+        self.fixture_policy()
+        path = self.repository / 'approved'
+        path.unlink()
+        path.mkdir()
+        (path / 'ordinary').write_text('ordinary content\n')
+        self.commit()
+        for tool in ['gitleaks', 'trufflehog']:
+            self.assertEqual(self.dispatch_policy_check(tool)[0], 2)
+        (path / 'ordinary').unlink()
+        path.rmdir()
+        path.write_text(self.candidate + '\n')
+        self.commit()
+        for tool in ['gitleaks', 'trufflehog']:
+            self.assertEqual(self.dispatch_policy_check(tool)[0], 2)
+
     def test_approved_blob_renamed_to_another_path_is_incomplete(self):
         self.fixture_policy()
         self.git('mv', 'approved', 'renamed')
@@ -167,6 +183,23 @@ class RealScannerTests(unittest.TestCase):
         for tool in ['gitleaks', 'trufflehog']:
             self.assertEqual(self.check(tool, event_name='pull_request', event=event, identity=identity)[0], 0)
             self.assertEqual(self.dispatch_policy_check(tool)[0], 2)
+
+    def test_proposed_exception_cannot_self_authorize_new_candidate(self):
+        base, entries = self.fixture_policy()
+        replacement = self.candidate[:-1] + ('A' if self.candidate[-1] != 'A' else 'B')
+        (self.repository / 'proposal').write_text(replacement + '\n')
+        self.commit()
+        blob = self.git('rev-parse', 'HEAD:proposal')
+        entries += [dict(entry, path='proposal', blob_oid=blob) for entry in list(entries)]
+        (self.repository / '.github/source-secret-exceptions.json').write_text(
+            json.dumps({'version': 1, 'exceptions': entries}))
+        head = self.commit()
+        event = {'repository': {'full_name': 'example/project', 'default_branch': 'main'},
+                 'pull_request': {'base': {'sha': base, 'ref': 'main',
+                                           'repo': {'full_name': 'example/project'}}}}
+        identity = {'repository': 'example/project', 'sha': head, 'ref': 'refs/pull/1/merge'}
+        for tool in ['gitleaks', 'trufflehog']:
+            self.assertEqual(self.check(tool, event_name='pull_request', event=event, identity=identity)[0], 1)
 
     def test_repository_and_inline_suppression_cannot_hide_candidates(self):
         (self.repository / 'text').write_text(self.candidate + ' # gitleaks:allow trufflehog:ignore\n')
