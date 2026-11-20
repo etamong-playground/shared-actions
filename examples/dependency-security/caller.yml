@@ -7,6 +7,6 @@ permissions:
   contents: read
 jobs:
   inspect:
-    uses: etamong-playground/shared-actions/.github/workflows/dependency-security.yml@<immutable-workflow-sha>
+    uses: etamong-playground/shared-actions/.github/workflows/dependency-security.yml@c3eaaa6649f5b2a28e3cd2a14044ff7c0c99df50
     secrets:
       alerts-read-token: ${{ secrets.DEPENDABOT_READ_TOKEN }}
