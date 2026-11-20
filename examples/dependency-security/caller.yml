@@ -1,0 +1,12 @@
+name: Dependency evidence
+on:
+  pull_request:
+  push:
+    branches: [main]
+permissions:
+  contents: read
+jobs:
+  inspect:
+    uses: etamong-playground/shared-actions/.github/workflows/dependency-security.yml@<immutable-workflow-sha>
+    secrets:
+      alerts-read-token: ${{ secrets.DEPENDABOT_READ_TOKEN }}

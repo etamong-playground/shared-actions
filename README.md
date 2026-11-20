@@ -158,6 +158,7 @@ The caller supplies a trusted runner, matching tool versions, serialized jobs, c
 
 Dependency advisory evidence is available through the [read-only collector](docs/dependency-security.md).
 Its outcomes are scoped to open alerts and exact-source lockfiles, with explicit incomplete coverage and an optional authenticated receiver contract.
+The [read-only reusable workflow](.github/workflows/dependency-security.yml) provides an isolated job with an immutable helper and report artifacts; the [caller example](examples/dependency-security/caller.yml) enables neither receiver delivery nor a schedule.
 
 - **Self-hosted runner**: set the `runner` input when your registry / secret manager /
   ingest endpoint is only reachable from inside your network.
