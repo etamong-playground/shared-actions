@@ -1,0 +1,41 @@
+name: Dependency security evidence
+description: Inspect open alerts and exact-source locks without executing repository code
+inputs:
+  alerts-read-token:
+    description: Explicit read-only contents and Dependabot alerts credential
+    required: true
+  report-endpoint:
+    description: Optional HTTPS receiver; default-branch delivery requires a trusted reusable workflow and OIDC
+    required: false
+    default: ''
+outputs:
+  report-path:
+    description: Bounded metadata report
+    value: ${{ steps.collect.outputs.report-path }}
+runs:
+  using: composite
+  steps:
+    - name: Install immutable helper dependencies
+      shell: bash
+      env:
+        HELPER_PATH: ${{ github.action_path }}
+      run: corepack pnpm --dir "$HELPER_PATH" install --frozen-lockfile --ignore-scripts
+    - name: Collect source evidence
+      id: collect
+      shell: bash
+      env:
+        HELPER_PATH: ${{ github.action_path }}
+        SCANNER_REVISION: ${{ github.action_ref }}
+        ALERTS_READ_TOKEN: ${{ inputs.alerts-read-token }}
+      run: node "$HELPER_PATH/cli.mjs" collect
+    - name: Publish default-branch history
+      shell: bash
+      env:
+        HELPER_PATH: ${{ github.action_path }}
+        REPORT_ENDPOINT: ${{ inputs.report-endpoint }}
+      run: node "$HELPER_PATH/cli.mjs" publish
+    - name: Enforce evidence outcome
+      shell: bash
+      env:
+        HELPER_PATH: ${{ github.action_path }}
+      run: node "$HELPER_PATH/cli.mjs" finish

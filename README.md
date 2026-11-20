@@ -149,6 +149,9 @@ The [caller guide](docs/source-secret-scanning.md) covers immutable action pins,
 
 ## Notes
 
+Dependency advisory evidence is available through the [read-only collector](docs/dependency-security.md).
+Its outcomes are scoped to open alerts and exact-source lockfiles, with explicit incomplete coverage and an optional authenticated receiver contract.
+
 - **Self-hosted runner**: set the `runner` input when your registry / secret manager /
   ingest endpoint is only reachable from inside your network.
 - **npm token**: fetch it from your secret manager in the calling workflow and pass it
