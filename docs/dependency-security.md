@@ -8,13 +8,26 @@ It does not create update PRs or replace an updater.
 
 ## Prerequisites
 
-The caller needs a supported runner with Node.js 22 or later, Python 3 for the reusable workflow bootstrap, and Corepack with pnpm 10.28.0.
+Use an isolated Linux runner with Bash and Corepack; the reusable workflow supplies Node.js 22.
+Direct helper callers supply Node.js 22 or later themselves.
+The immutable helper selects pnpm 10.28.0 from its own package metadata.
 Supply an explicit read-only GitHub credential authorized for the caller's contents and Dependabot alerts.
 A repository's ordinary Actions token does not establish Dependabot-alert access.
 Use an isolated runner; the collector's immutable dependencies are installed with lifecycle scripts disabled before the read credential is exposed to its inspection step.
 No application or publishing credentials belong in this job.
 
 ## Read-only caller
+
+Use the [reusable workflow](../.github/workflows/dependency-security.yml) for an isolated read-only job and the [complete caller example](../examples/dependency-security/caller.yml) to opt in.
+Pin the workflow to a reviewed 40-character commit containing that file.
+The example's default branch is `main`; change its push filter when the caller uses another default branch.
+The `runner` input accepts the caller's approved isolated runner label and defaults to `ubuntu-latest`.
+Review hosted-runner usage before adopting that default in a private repository.
+The workflow grants only `contents: read`, does not check out caller code and exposes no receiver or OIDC option.
+Findings and incomplete evidence fail the job; an artifact is retained when the helper has produced a report, including after its outcome enforcement fails.
+Failure before report creation remains a failed job without an artifact.
+
+For an existing custom job, invoke the composite helper directly:
 
 Replace `<immutable-helper-sha>` with a reviewed 40-character commit from this repository.
 Keep this job isolated from application tests; the collector does not need a caller checkout.

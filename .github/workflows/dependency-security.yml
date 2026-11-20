@@ -1,0 +1,36 @@
+name: Dependency security evidence
+on:
+  workflow_call:
+    inputs:
+      runner:
+        description: Isolated runner label approved by the caller
+        type: string
+        default: ubuntu-latest
+    secrets:
+      alerts-read-token:
+        description: Read-only caller contents and Dependabot alerts credential
+        required: true
+permissions:
+  contents: read
+jobs:
+  inspect:
+    runs-on: ${{ inputs.runner }}
+    timeout-minutes: 15
+    steps:
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '22'
+      - run: corepack enable
+      - name: Inspect immutable source evidence
+        id: evidence
+        uses: etamong-playground/shared-actions/.github/actions/dependency-security@e63db671747a4936ee00963ab363b5b6d98c9068
+        with:
+          alerts-read-token: ${{ secrets.alerts-read-token }}
+      - name: Retain the produced report
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: ${{ always() && steps.evidence.outputs.report-path != '' }}
+        with:
+          name: dependency-security
+          path: ${{ steps.evidence.outputs.report-path }}
+          if-no-files-found: error
+          retention-days: 14
