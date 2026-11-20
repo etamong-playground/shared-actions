@@ -1,7 +1,9 @@
 # Dependency security evidence
 
 The collector checks open Dependabot alerts against an immutable source commit without executing that repository's code.
-It reads pnpm v6/v9 lockfiles and Go module requirements, including indirect dependencies.
+It verifies registry-integrity pnpm v6/v9 lockfile entries with importers, including transitive dependencies.
+Unsupported resolutions and layouts remain incomplete; this is not a substitute for the package manager validating its entire lockfile.
+Go requirements are declaration evidence only; Go alerts remain incomplete because a requirement does not establish the selected graph or workspace replacements.
 It does not create update PRs or replace an updater.
 
 ## Prerequisites
@@ -32,9 +34,17 @@ jobs:
         with:
           node-version: '22'
       - run: corepack enable
-      - uses: etamong-playground/shared-actions/.github/actions/dependency-security@<immutable-helper-sha>
+      - id: evidence
+        uses: etamong-playground/shared-actions/.github/actions/dependency-security@<immutable-helper-sha>
         with:
           alerts-read-token: ${{ secrets.DEPENDABOT_READ_TOKEN }}
+      - uses: actions/upload-artifact@v4
+        if: ${{ always() && steps.evidence.outputs.report-path != '' }}
+        with:
+          name: dependency-security
+          path: ${{ steps.evidence.outputs.report-path }}
+          if-no-files-found: error
+          retention-days: 14
 ```
 
 This direct helper example does not enable receiver delivery.
@@ -47,16 +57,19 @@ The job summary and JSON artifact distinguish:
 | Result | Meaning | Exit |
 | --- | --- | --- |
 | `clean` | Complete inspection found no affected resolved version among the inspected open alerts | 0 |
-| `findings` | Affected versions remain; a missing upstream patch is recorded explicitly | 1 |
+| `findings` | Complete inspection found affected versions; a missing upstream patch is recorded explicitly | 1 |
 | Error or incomplete coverage | Inspection could not establish its declared scope, even if some known findings were collected | 2 |
 
+Incomplete coverage takes precedence as `error`, while confirmed checks and `finding_count` remain visible.
 An empty alert list is clean only within the open-alert scope.
 It is not a complete dependency inventory, OSV comparison, call-graph reachability analysis or deployed-image scan.
-Failed access, changing pagination, unsupported ecosystems or formats, missing expected packages and Go replacements remain incomplete evidence.
+Failed access, observed pagination changes, unsupported ecosystems or formats, missing expected packages and Go replacements remain incomplete evidence.
 The Go minimum-version directive is never treated as the compiled standard-library version.
 Removing an alert or publishing a fix does not by itself prove runtime remediation.
 
-The collector reads at most ten pages of 100 alerts, 64 source files, 1 MiB per file and 8 MiB of source content.
+The collector compares two consecutive traversals of at most ten pages of 100 alerts each.
+A mismatch fails coverage; the API has no atomic snapshot, so changes invisible to both observations remain possible.
+It reads at most 64 source files, 1 MiB per file and 8 MiB of source content.
 It rejects truncated repository trees, limits its report to 1 MiB and has bounded HTTP timeouts.
 Exceeding a limit fails coverage; it never silently truncates a clean result.
 PR inspection uses the event's source head and checks it again before completion.
@@ -88,8 +101,9 @@ Keep error and incomplete results visible, and gate report reads by the receiver
 ## Local qualification
 
 ```sh
-corepack pnpm --dir .github/actions/dependency-security install --frozen-lockfile --ignore-scripts
-corepack pnpm --dir .github/actions/dependency-security test
+cd .github/actions/dependency-security
+corepack pnpm install --frozen-lockfile --ignore-scripts
+corepack pnpm test
 ```
 
 Tests use controlled GitHub responses and synthetic identities.

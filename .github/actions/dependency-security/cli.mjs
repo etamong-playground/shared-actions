@@ -1,6 +1,7 @@
 import fs from 'node:fs/promises';
 import { constants } from 'node:fs';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { collect, exitCode, audienceFor, MAX_REPORT_BYTES } from './report.mjs';
 
 async function responseBytes(response, limit) {
@@ -74,7 +75,7 @@ async function main(command, env) {
   await publish(env.REPORT_ENDPOINT, bytes, env.ACTIONS_ID_TOKEN_REQUEST_URL, env.ACTIONS_ID_TOKEN_REQUEST_TOKEN);
   return 0;
 }
-if (process.argv[1] && path.resolve(process.argv[1]) === path.resolve(new URL(import.meta.url).pathname)) {
+if (process.argv[1] && path.resolve(process.argv[1]) === path.resolve(fileURLToPath(import.meta.url))) {
   main(process.argv[2], process.env).then(code => { process.exitCode = code; }).catch(() => {
     process.stderr.write('Dependency evidence could not be completed; raw diagnostics suppressed.\n'); process.exitCode = 2;
   });

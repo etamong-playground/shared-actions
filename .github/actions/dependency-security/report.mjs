@@ -29,13 +29,23 @@ export function pnpmVersions(text, name) {
   if (doc.errors.length) throw new Error('invalid_lockfile');
   const data = doc.toJS({ mapAsMap: true, maxAliasCount: 0 });
   if (!(data instanceof Map) || !['6.0', '6', '9.0', '9'].includes(String(data.get('lockfileVersion')))) throw new Error('unsupported_lockfile');
+  const importers = data.get('importers');
+  const snapshots = data.get('snapshots');
+  const v9 = ['9', '9.0'].includes(String(data.get('lockfileVersion')));
+  if (!(importers instanceof Map) || (v9 && !(snapshots instanceof Map))) throw new Error('unsupported_lockfile');
+  for (const entry of importers.values()) if (!(entry instanceof Map)) throw new Error('invalid_lockfile');
+  if (v9) for (const entry of snapshots.values()) if (!(entry instanceof Map)) throw new Error('invalid_lockfile');
   const packages = data.get('packages');
   if (!(packages instanceof Map)) throw new Error('invalid_lockfile');
   const versions = new Set();
-  for (const [key] of packages) {
+  for (const [key, entry] of packages) {
+    if (!(entry instanceof Map)) throw new Error('invalid_lockfile');
     if (typeof key !== 'string') throw new Error('invalid_lockfile');
     const k = key.replace(/^\//, '');
     if (!k.startsWith(name + '@')) continue;
+    const resolution = entry.get('resolution');
+    if (!(resolution instanceof Map) || !/^sha(1|256|384|512)-[A-Za-z0-9+/]+={0,2}$/.test(resolution.get('integrity') ?? '')) throw new Error('unsupported_resolution');
+    if (v9 && ![...snapshots.keys()].some(x => typeof x === 'string' && x.split('(')[0] === k.split('(')[0])) throw new Error('invalid_lockfile');
     const v = k.slice(name.length + 1).split('(')[0];
     if (!semver.valid(v) || !safeText(v, 128)) throw new Error('unsupported_version');
     versions.add(v);
@@ -99,18 +109,23 @@ export async function collect(api, context, event) {
   try {
     const repo = await api.json(root);
     if (String(repo.id) !== report.repository.id || String(repo.owner?.id) !== report.repository.owner_id || repo.full_name !== context.repository || repo.default_branch !== report.repository.default_branch) throw new Error('repository_identity_mismatch');
-    const seen = new Set();
-    const alerts = [];
-    for (let page = 1; ; page++) {
-      if (page > 10) throw new Error('incomplete_pagination');
-      const batch = await api.json(`${root}/dependabot/alerts?state=open&per_page=100&page=${page}`);
-      if (!Array.isArray(batch)) throw new Error('invalid_alert_response');
-      for (const a of batch) {
-        if (!Number.isSafeInteger(a.number) || seen.has(a.number)) throw new Error('inconsistent_pagination');
-        seen.add(a.number); alerts.push(a);
+    async function readAlerts() {
+      const seen = new Set(); const result = [];
+      for (let page = 1; ; page++) {
+        if (page > 10) throw new Error('incomplete_pagination');
+        const batch = await api.json(`${root}/dependabot/alerts?state=open&per_page=100&page=${page}`);
+        if (!Array.isArray(batch) || batch.length > 100) throw new Error('invalid_alert_response');
+        for (const a of batch) {
+          if (!Number.isSafeInteger(a.number) || seen.has(a.number)) throw new Error('inconsistent_pagination');
+          seen.add(a.number); result.push(a);
+        }
+        if (batch.length < 100) return result;
       }
-      if (batch.length < 100) break;
     }
+    const alerts = await readAlerts();
+    const confirmed = await readAlerts();
+    const signature = list => JSON.stringify(list.map(a => [a.number, a.dependency, a.security_advisory?.ghsa_id, a.security_advisory?.severity, a.security_vulnerability]).sort((a, b) => a[0] - b[0]));
+    if (signature(alerts) !== signature(confirmed)) throw new Error('inconsistent_pagination');
     report.coverage.alerts = true;
     report.alert_count = alerts.length;
     let paths = [];
@@ -149,6 +164,8 @@ export async function collect(api, context, event) {
         } else {
           if (!/(^|\/)go\.mod$/.test(check.manifest)) throw new Error('unsupported_manifest');
           check.versions = goVersions(await read(check.manifest), check.package);
+          check.reason = 'unverified_go_resolution';
+          throw new Error('unsupported_go_resolution');
         }
         if (!check.versions.length) throw new Error('missing_package');
         const matches = check.versions.map(v => vulnerable(v, check.range));
@@ -165,7 +182,7 @@ export async function collect(api, context, event) {
     }
   } catch { fail('inspection_failed'); }
   report.finding_count = report.checks.filter(x => x.outcome === 'vulnerable').length;
-  report.outcome = report.finding_count ? 'findings' : report.coverage.alerts && report.coverage.lockfiles && !report.errors.length ? 'clean' : 'error';
+  report.outcome = !report.coverage.alerts || !report.coverage.lockfiles || report.errors.length ? 'error' : report.finding_count ? 'findings' : 'clean';
   if (Buffer.byteLength(JSON.stringify(report)) > MAX_REPORT_BYTES) {
     report.checks = []; report.finding_count = 0; report.outcome = 'error'; report.coverage.lockfiles = false; report.errors = ['report_limit'];
   }

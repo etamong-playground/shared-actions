@@ -19,7 +19,9 @@ runs:
       shell: bash
       env:
         HELPER_PATH: ${{ github.action_path }}
-      run: corepack pnpm --dir "$HELPER_PATH" install --frozen-lockfile --ignore-scripts
+      run: |
+        cd "$HELPER_PATH"
+        corepack pnpm install --frozen-lockfile --ignore-scripts
     - name: Collect source evidence
       id: collect
       shell: bash
