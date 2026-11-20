@@ -1,0 +1,8 @@
+{
+  "name": "dependency-security-evidence",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@10.28.0",
+  "scripts": { "test": "node --test report.test.mjs" },
+  "dependencies": { "semver": "7.8.6", "yaml": "2.9.1" }
+}
