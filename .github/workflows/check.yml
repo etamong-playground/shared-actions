@@ -17,8 +17,10 @@ jobs:
         with:
           node-version: '22'
       - run: corepack enable
-      - run: corepack pnpm --dir .github/actions/dependency-security install --frozen-lockfile --ignore-scripts
-      - run: corepack pnpm --dir .github/actions/dependency-security test
+      - run: corepack pnpm install --frozen-lockfile --ignore-scripts
+        working-directory: .github/actions/dependency-security
+      - run: corepack pnpm test
+        working-directory: .github/actions/dependency-security
   checks:
     runs-on: ubuntu-latest
     steps:
